@@ -1,0 +1,29 @@
+{
+  "title": "Swiggy MCP",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect your Swiggy account",
+        "description": "Click **Submit** to be redirected to Swiggy's login page. You'll authorise this Home Assistant instance to access your Swiggy account.\n\nNo token entry required — auth is handled securely via OAuth 2.1.",
+        "data": {}
+      },
+      "address": {
+        "title": "Delivery address & polling",
+        "description": "Choose which saved Swiggy address to use for order tracking and cart actions.",
+        "data": {
+          "address_id": "Default Delivery Address",
+          "poll_interval": "Poll Interval (seconds)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to reach Swiggy servers. Check your internet connection.",
+      "invalid_auth": "Authorisation failed or was cancelled. Please try again.",
+      "unknown": "Unexpected error. Check the Home Assistant logs for details."
+    },
+    "abort": {
+      "already_configured": "Swiggy MCP is already configured.",
+      "reauth_successful": "Re-authentication successful."
+    }
+  }
+}

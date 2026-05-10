@@ -1,0 +1,47 @@
+reorder_last:
+  name: Reorder Last Order
+  description: Re-places your most recent Swiggy food order (same items, same restaurant).
+
+add_to_cart:
+  name: Add to Cart
+  description: Add an item to your Swiggy Food or Instamart cart.
+  fields:
+    item:
+      name: Item
+      description: Name of the item to add (e.g. "Maggi Noodles 70g")
+      required: true
+      example: "Maggi Noodles 70g"
+      selector:
+        text:
+    quantity:
+      name: Quantity
+      description: Number of units to add (default 1)
+      example: 2
+      selector:
+        number:
+          min: 1
+          max: 20
+          mode: box
+    service:
+      name: Service
+      description: Which Swiggy service to use — food or instamart
+      default: instamart
+      selector:
+        select:
+          options:
+            - food
+            - instamart
+
+clear_cart:
+  name: Clear Cart
+  description: Remove all items from your Swiggy cart.
+  fields:
+    service:
+      name: Service
+      description: Which cart to clear — food or instamart
+      default: food
+      selector:
+        select:
+          options:
+            - food
+            - instamart
