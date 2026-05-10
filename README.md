@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./logo.png" alt="Swiggy Home Assistant Integration" width="220" />
+  <img src="./custom_components/swiggy_mcp/brand/logo.png" alt="Swiggy Home Assistant Integration" width="220" />
 
   <h1>Swiggy MCP — Home Assistant Integration</h1>
 
