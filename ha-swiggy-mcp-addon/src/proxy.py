@@ -57,7 +57,7 @@ async def proxy_request(
 
     access_token = await _get_valid_token(session)
     if not access_token:
-        return 401, {}, b'{"error": "not authenticated — complete OAuth in add-on UI"}'
+        return 401, {}, b'{"error": "not authenticated - complete OAuth in add-on UI"}'
 
     headers = {
         "Authorization": f"Bearer {access_token}",
