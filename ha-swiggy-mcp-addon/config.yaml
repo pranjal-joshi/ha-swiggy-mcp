@@ -27,5 +27,5 @@ options:
   log_level: info
 schema:
   swiggy_services:
-    - list(str)
+    - "food|instamart|dineout"
   log_level: list(debug|info|warning|error)
