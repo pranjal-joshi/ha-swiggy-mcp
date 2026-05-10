@@ -203,8 +203,9 @@ class SwiggyApiClient:
 
     async def flush_cart(self, service: str, address_id: str) -> dict:
         svc = "instamart" if service == "instamart" else "food"
+        tool = "flush_instamart_cart" if service == "instamart" else "flush_food_cart"
         raw = await self._post(
             svc,
-            _mcp_payload("flush_food_cart", {"addressId": address_id}),
+            _mcp_payload(tool, {"addressId": address_id}),
         )
         return _parse_mcp_data(raw) or {}

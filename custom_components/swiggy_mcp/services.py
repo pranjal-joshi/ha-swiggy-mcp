@@ -10,6 +10,8 @@ import logging
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from .const import (
     CONF_ADDRESS_ID,
@@ -50,30 +52,40 @@ def async_setup_services(hass: HomeAssistant) -> None:
         coordinator = _get_coordinator(hass)
         order_id = (coordinator.data or {}).get("order_id")
         if not order_id:
-            _LOGGER.warning("No recent order found — cannot reorder")
-            return
-        details = await coordinator.client.get_food_order_details(order_id)
-        _LOGGER.info("Reorder triggered for order %s: %s", order_id, details)
+            raise ServiceValidationError(
+                "No recent order found — make sure an active or recent order exists"
+            )
+        try:
+            details = await coordinator.client.get_food_order_details(order_id)
+            _LOGGER.info("Reorder triggered for order %s: %s", order_id, details)
+        except UpdateFailed as err:
+            raise HomeAssistantError(f"Swiggy reorder failed: {err}") from err
 
     async def handle_add_to_cart(call: ServiceCall) -> None:
         coordinator = _get_coordinator(hass)
-        address_id = (coordinator._entry.data.get(CONF_ADDRESS_ID) or coordinator._address_id or "")
-        result = await coordinator.client.add_to_cart(
-            service=call.data.get("service", "instamart"),
-            item=call.data["item"],
-            quantity=call.data.get("quantity", 1),
-            address_id=address_id,
-        )
-        _LOGGER.info("Add to cart: %s", result)
+        address_id = coordinator._entry.data.get(CONF_ADDRESS_ID) or coordinator._address_id or ""
+        try:
+            result = await coordinator.client.add_to_cart(
+                service=call.data.get("service", "instamart"),
+                item=call.data["item"],
+                quantity=call.data.get("quantity", 1),
+                address_id=address_id,
+            )
+            _LOGGER.info("Add to cart: %s", result)
+        except UpdateFailed as err:
+            raise HomeAssistantError(f"Add to cart failed: {err}") from err
 
     async def handle_clear_cart(call: ServiceCall) -> None:
         coordinator = _get_coordinator(hass)
-        address_id = (coordinator._entry.data.get(CONF_ADDRESS_ID) or coordinator._address_id or "")
-        result = await coordinator.client.flush_cart(
-            service=call.data.get("service", "food"),
-            address_id=address_id,
-        )
-        _LOGGER.info("Cart cleared: %s", result)
+        address_id = coordinator._entry.data.get(CONF_ADDRESS_ID) or coordinator._address_id or ""
+        try:
+            result = await coordinator.client.flush_cart(
+                service=call.data.get("service", "food"),
+                address_id=address_id,
+            )
+            _LOGGER.info("Cart cleared: %s", result)
+        except UpdateFailed as err:
+            raise HomeAssistantError(f"Clear cart failed: {err}") from err
 
     hass.services.async_register(DOMAIN, SERVICE_REORDER_LAST, handle_reorder_last)
     hass.services.async_register(
