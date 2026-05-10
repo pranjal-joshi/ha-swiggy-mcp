@@ -9,6 +9,14 @@
           "use_addon": "Use Swiggy MCP Proxy add-on (recommended)"
         }
       },
+      "oauth": {
+        "title": "Log in with Swiggy",
+        "description": "A browser window will open for you to log in to Swiggy. After logging in, you will be redirected back automatically."
+      },
+      "exchange": {
+        "title": "Completing Swiggy login…",
+        "description": "Exchanging the authorisation code for tokens. This should only take a moment."
+      },
       "addon": {
         "title": "Swiggy MCP Proxy Add-on",
         "description": "Enter the URL where the Swiggy MCP Proxy add-on is running (default: {default_url}). Make sure you have logged in to Swiggy via the add-on UI first.",
