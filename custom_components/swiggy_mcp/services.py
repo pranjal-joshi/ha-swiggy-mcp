@@ -57,7 +57,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_add_to_cart(call: ServiceCall) -> None:
         coordinator = _get_coordinator(hass)
-        address_id = coordinator._entry.data[CONF_ADDRESS_ID]  # type: ignore[attr-defined]
+        address_id = (coordinator._entry.data.get(CONF_ADDRESS_ID) or coordinator._address_id or "")
         result = await coordinator.client.add_to_cart(
             service=call.data.get("service", "instamart"),
             item=call.data["item"],
@@ -68,7 +68,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_clear_cart(call: ServiceCall) -> None:
         coordinator = _get_coordinator(hass)
-        address_id = coordinator._entry.data[CONF_ADDRESS_ID]  # type: ignore[attr-defined]
+        address_id = (coordinator._entry.data.get(CONF_ADDRESS_ID) or coordinator._address_id or "")
         result = await coordinator.client.flush_cart(
             service=call.data.get("service", "food"),
             address_id=address_id,

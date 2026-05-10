@@ -55,6 +55,13 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict:
         """Fetch latest order from Swiggy; returns normalised state dict."""
         try:
+            # In add-on mode address_id may be empty — fetch it lazily
+            if not self._address_id:
+                addresses = await self.client.get_addresses()
+                if addresses:
+                    self._address_id = addresses[0].get("id", "")
+                    _LOGGER.debug("Resolved address_id from Swiggy: %s", self._address_id)
+
             orders_data = await self.client.get_food_orders(self._address_id, count=1)
         except ConfigEntryAuthFailed:
             raise  # let HA handle reauth

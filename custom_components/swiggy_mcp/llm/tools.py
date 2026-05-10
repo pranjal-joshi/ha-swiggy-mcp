@@ -20,6 +20,11 @@ from ..const import DOMAIN, SWIGGY_FOOD_URL, SWIGGY_INSTAMART_URL
 
 _LOGGER = logging.getLogger(__name__)
 
+_URL_TO_SERVICE = {
+    SWIGGY_FOOD_URL: "food",
+    SWIGGY_INSTAMART_URL: "instamart",
+}
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -46,7 +51,10 @@ async def _call_mcp(hass: HomeAssistant, url: str, tool_name: str, args: dict) -
     """Call a Swiggy MCP tool and return a JSON-serialisable dict."""
     client, addr_id = _get_client(hass)
     args_with_addr = {**args, "addressId": addr_id}
-    raw = await client._post(url, _mcp_call(tool_name, args_with_addr))
+    # Resolve service name ("food"/"instamart") from the endpoint URL so
+    # client._resolve_url() works correctly in both direct and add-on mode.
+    service = _URL_TO_SERVICE.get(url, "food")
+    raw = await client._post(service, _mcp_call(tool_name, args_with_addr))
     content = raw.get("result", {}).get("content", [])
     if content:
         text = content[0].get("text", "{}")
