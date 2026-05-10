@@ -33,6 +33,22 @@ from storage import load_tokens, save_tokens, clear_tokens
 from oauth import do_dcr, build_auth_url, extract_code_from_url, exchange_code
 from proxy import proxy_request
 
+
+class SlashNormalizingRouter(web.UrlDispatcher):
+    """Router that collapses repeated slashes before matching.
+
+    HA ingress forwards requests with paths like '////' (multiple leading
+    slashes). aiohttp resolves routes BEFORE middleware runs, so path
+    normalisation must happen here — in resolve() — not in middleware.
+    """
+    async def resolve(self, request: web.Request):
+        normalized = re.sub(r"/+", "/", request.path)
+        if normalized != request.path:
+            request = request.clone(
+                rel_url=request.rel_url.with_path(normalized)
+            )
+        return await super().resolve(request)
+
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "info").upper(),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -247,15 +263,10 @@ async def on_cleanup(app: web.Application) -> None:
 def create_app() -> web.Application:
     @web.middleware
     async def merge_slashes(request: web.Request, handler):
-        """Collapse repeated slashes in-place with no redirect.
-        HA ingress forwards //// — normalize to / before routing.
-        """
-        normalized = re.sub(r"/+", "/", request.path)
-        if normalized != request.path:
-            request = request.clone(rel_url=request.rel_url.with_path(normalized))
+        """No-op kept for safety; real normalisation is in SlashNormalizingRouter."""
         return await handler(request)
 
-    app = web.Application(middlewares=[merge_slashes])
+    app = web.Application(router=SlashNormalizingRouter(), middlewares=[merge_slashes])
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
 
