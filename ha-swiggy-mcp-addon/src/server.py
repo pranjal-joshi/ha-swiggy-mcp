@@ -11,8 +11,14 @@ Routes:
   POST /im          → Proxy to mcp.swiggy.com/im
   POST /dineout     → Proxy to mcp.swiggy.com/dineout
   GET  /health      → Health check
+
+HA Ingress note:
+  When accessed via Nabu Casa / remote ingress, HA proxies all requests
+  under a dynamic base path (/api/hassio_ingress/<TOKEN>/). The server
+  reads the X-Ingress-Path header injected by HA and prefixes all
+  redirects and HTML hrefs with it so the UI works identically on LAN
+  and remote.
 """
-import asyncio
 import logging
 import os
 import secrets
@@ -34,11 +40,25 @@ _LOGGER = logging.getLogger("swiggy_mcp_proxy")
 _session: aiohttp.ClientSession = None
 _oauth_state: dict = {}
 
+# ── Ingress base-path helper ─────────────────────────────────────────────────
+
+def _base(request: web.Request) -> str:
+    """Return the HA ingress base path (empty string on LAN direct access)."""
+    return request.headers.get("X-Ingress-Path", "").rstrip("/")
+
+
+def _url(request: web.Request, path: str) -> str:
+    """Build an absolute-looking href that works under any ingress prefix."""
+    return f"{_base(request)}{path}"
+
+
+# ── Auth / status helpers ────────────────────────────────────────────────────
 
 def _is_authenticated() -> bool:
-    tokens = load_tokens()
-    return bool(tokens.get("access_token"))
+    return bool(load_tokens().get("access_token"))
 
+
+# ── HTML template ────────────────────────────────────────────────────────────
 
 HTML_BASE = """<!DOCTYPE html>
 <html>
@@ -72,11 +92,12 @@ HTML_BASE = """<!DOCTYPE html>
 </body>
 </html>"""
 
+# ── Route handlers ───────────────────────────────────────────────────────────
 
 async def handle_index(request: web.Request) -> web.Response:
-    authed = _is_authenticated()
-    if authed:
-        body = """
+    base = _base(request)
+    if _is_authenticated():
+        body = f"""
 <div class="card">
   <h1>🍕 Swiggy MCP Proxy</h1>
   <p>Status: <span class="badge badge-ok">✓ Authenticated</span></p>
@@ -86,21 +107,22 @@ async def handle_index(request: web.Request) -> web.Response:
     <li><code>http://homeassistant.local:9584/instamart</code></li>
     <li><code>http://homeassistant.local:9584/dineout</code></li>
   </ul>
-  <a href="/auth/logout" class="btn btn-danger">Logout / Re-authenticate</a>
+  <a href="{base}/auth/logout" class="btn btn-danger">Logout / Re-authenticate</a>
 </div>"""
     else:
-        body = """
+        body = f"""
 <div class="card">
   <h1>🍕 Swiggy MCP Proxy</h1>
   <p>Status: <span class="badge badge-warn">⚠ Not authenticated</span></p>
   <p>You need to log in with your Swiggy account to start using the proxy.</p>
-  <a href="/auth/start" class="btn btn-primary">Login with Swiggy →</a>
+  <a href="{base}/auth/start" class="btn btn-primary">Login with Swiggy →</a>
 </div>"""
     return web.Response(text=HTML_BASE.format(body=body), content_type="text/html")
 
 
 async def handle_auth_start(request: web.Request) -> web.Response:
     global _oauth_state
+    base = _base(request)
     tokens = load_tokens()
     client_id = tokens.get("client_id")
 
@@ -112,7 +134,7 @@ async def handle_auth_start(request: web.Request) -> web.Response:
             tokens["client_id"] = client_id
             save_tokens(tokens)
         except Exception as e:
-            body = f'<div class="card"><h1>🍕 Swiggy MCP Proxy</h1><p>❌ Registration failed: {e}</p><a href="/" class="btn btn-secondary">Back</a></div>'
+            body = f'<div class="card"><h1>🍕 Swiggy MCP Proxy</h1><p>❌ Registration failed: {e}</p><a href="{base}/" class="btn btn-secondary">Back</a></div>'
             return web.Response(text=HTML_BASE.format(body=body), content_type="text/html")
 
     verifier = secrets.token_urlsafe(64)
@@ -126,20 +148,20 @@ async def handle_auth_start(request: web.Request) -> web.Response:
   <h1>🍕 Swiggy MCP Proxy — Login</h1>
   <div class="note">
     <strong>How this works:</strong> After clicking the link below, Swiggy will redirect your browser to
-    <code>http://localhost/callback</code>. That page will fail to load (that's expected on remote HA) —
-    just <strong>copy the full URL</strong> from your browser's address bar and paste it below.
+    <code>http://localhost:9584/callback</code>. That page will fail to load — that's expected.
+    Just <strong>copy the full URL</strong> from your browser's address bar and paste it below.
   </div>
   <br>
   <ol class="steps">
     <li><a href="{auth_url}" target="_blank" class="btn btn-primary">Open Swiggy Login ↗</a></li>
     <li>Log in with your Swiggy account</li>
-    <li>Your browser will redirect to a page that doesn't load — <strong>copy the full URL</strong> from the address bar (it starts with <code>http://localhost/callback?code=...</code>)</li>
+    <li>Your browser redirects to a page that doesn't load — <strong>copy the full URL</strong> from the address bar (it contains <code>?code=...</code>)</li>
     <li>Paste it below and click Submit</li>
   </ol>
   <br>
-  <form method="POST" action="/auth/submit">
+  <form method="POST" action="{base}/auth/submit">
     <label><strong>Paste the redirect URL here:</strong></label>
-    <input type="text" name="redirect_url" placeholder="http://localhost/callback?code=...&state=..." />
+    <input type="text" name="redirect_url" placeholder="http://localhost:9584/callback?code=...&state=..." />
     <button type="submit" class="btn btn-primary">Submit</button>
   </form>
 </div>"""
@@ -148,17 +170,18 @@ async def handle_auth_start(request: web.Request) -> web.Response:
 
 async def handle_auth_submit(request: web.Request) -> web.Response:
     global _oauth_state
+    base = _base(request)
     data = await request.post()
     pasted = data.get("redirect_url", "").strip()
 
     if not pasted:
-        body = '<div class="card"><h1>🍕 Swiggy MCP Proxy</h1><p>❌ No URL provided.</p><a href="/auth/start" class="btn btn-secondary">Try again</a></div>'
+        body = f'<div class="card"><h1>🍕 Swiggy MCP Proxy</h1><p>❌ No URL provided.</p><a href="{base}/auth/start" class="btn btn-secondary">Try again</a></div>'
         return web.Response(text=HTML_BASE.format(body=body), content_type="text/html")
 
     code, state = extract_code_from_url(pasted)
 
     if not code:
-        body = '<div class="card"><h1>🍕 Swiggy MCP Proxy</h1><p>❌ Could not extract authorization code. Make sure you copied the full URL from your browser\'s address bar.</p><a href="/auth/start" class="btn btn-secondary">Try again</a></div>'
+        body = f'<div class="card"><h1>🍕 Swiggy MCP Proxy</h1><p>❌ Could not extract authorization code. Make sure you copied the full URL from your browser\'s address bar.</p><a href="{base}/auth/start" class="btn btn-secondary">Try again</a></div>'
         return web.Response(text=HTML_BASE.format(body=body), content_type="text/html")
 
     verifier = _oauth_state.get("verifier", "")
@@ -167,7 +190,7 @@ async def handle_auth_submit(request: web.Request) -> web.Response:
     try:
         token_data = await exchange_code(_session, code, verifier, client_id)
     except Exception as e:
-        body = f'<div class="card"><h1>🍕 Swiggy MCP Proxy</h1><p>❌ Token exchange failed: {e}</p><a href="/auth/start" class="btn btn-secondary">Try again</a></div>'
+        body = f'<div class="card"><h1>🍕 Swiggy MCP Proxy</h1><p>❌ Token exchange failed: {e}</p><a href="{base}/auth/start" class="btn btn-secondary">Try again</a></div>'
         return web.Response(text=HTML_BASE.format(body=body), content_type="text/html")
 
     tokens = load_tokens()
@@ -178,19 +201,19 @@ async def handle_auth_submit(request: web.Request) -> web.Response:
     save_tokens(tokens)
     _oauth_state = {}
 
-    body = """
+    body = f"""
 <div class="card">
   <h1>🍕 Swiggy MCP Proxy</h1>
   <p>✅ <strong>Authentication successful!</strong></p>
   <p>The proxy is now ready. Configure your Home Assistant Swiggy MCP integration to use add-on mode.</p>
-  <a href="/" class="btn btn-primary">Go to Dashboard</a>
+  <a href="{base}/" class="btn btn-primary">Go to Dashboard</a>
 </div>"""
     return web.Response(text=HTML_BASE.format(body=body), content_type="text/html")
 
 
 async def handle_auth_logout(request: web.Request) -> web.Response:
     clear_tokens()
-    raise web.HTTPFound("/")
+    raise web.HTTPFound(_url(request, "/"))
 
 
 async def handle_health(request: web.Request) -> web.Response:
@@ -203,12 +226,10 @@ async def handle_proxy(request: web.Request) -> web.Response:
     status, resp_headers, resp_body = await proxy_request(
         service, body, dict(request.headers), _session
     )
-    return web.Response(
-        status=status,
-        body=resp_body,
-        headers=resp_headers,
-    )
+    return web.Response(status=status, body=resp_body, headers=resp_headers)
 
+
+# ── App lifecycle ────────────────────────────────────────────────────────────
 
 async def on_startup(app: web.Application) -> None:
     global _session
