@@ -1,0 +1,9 @@
+build_from:
+  aarch64: "ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.19"
+  amd64: "ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.19"
+  armv7: "ghcr.io/home-assistant/armv7-base-python:3.12-alpine3.19"
+labels:
+  org.opencontainers.image.title: "Swiggy MCP Proxy"
+  org.opencontainers.image.description: "Local OAuth-authenticated MCP proxy for Swiggy"
+  org.opencontainers.image.source: "https://github.com/pranjal-joshi/ha-swiggy-mcp"
+  org.opencontainers.image.licenses: "MIT"

@@ -1,0 +1,31 @@
+name: "Swiggy MCP Proxy"
+description: "Local OAuth-authenticated MCP proxy for Swiggy — Food, Instamart & Dineout"
+version: "0.1.0"
+slug: "swiggy_mcp_proxy"
+init: false
+arch:
+  - amd64
+  - aarch64
+  - armv7
+ports:
+  9584/tcp: 9584
+ports_description:
+  9584/tcp: "Swiggy MCP Proxy (HTTP)"
+ingress: true
+ingress_port: 9584
+ingress_entry: /
+panel_icon: mdi:food
+homeassistant_api: false
+hassio_api: false
+map:
+  - data:rw
+options:
+  swiggy_services:
+    - food
+    - instamart
+    - dineout
+  log_level: info
+schema:
+  swiggy_services:
+    - list(str)
+  log_level: list(debug|info|warning|error)

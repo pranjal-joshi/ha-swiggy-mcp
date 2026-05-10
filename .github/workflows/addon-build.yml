@@ -1,0 +1,52 @@
+name: Add-on Build & Push
+
+on:
+  push:
+    tags:
+      - "addon-v*.*.*"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/ha-swiggy-mcp-addon
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            base: "ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.19"
+          - arch: aarch64
+            platform: linux/arm64
+            base: "ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.19"
+          - arch: armv7
+            platform: linux/arm/v7
+            base: "ghcr.io/home-assistant/armv7-base-python:3.12-alpine3.19"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#addon-v}" >> $GITHUB_OUTPUT
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ha-swiggy-mcp-addon
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: BUILD_FROM=${{ matrix.base }}
+          tags: |
+            ${{ env.IMAGE_BASE }}-${{ matrix.arch }}:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE_BASE }}-${{ matrix.arch }}:latest

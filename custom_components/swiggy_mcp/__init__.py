@@ -44,9 +44,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     # ── Build auth + API stack ────────────────────────────────────────────────
-    store = TokenStore(hass, entry)
-    auth = SwiggyAuthManager(hass, store)
-    client = SwiggyApiClient(hass, auth)
+    from .const import CONF_USE_ADDON
+    use_addon = entry.data.get(CONF_USE_ADDON, False)
+    if use_addon:
+        store = None
+        auth = None
+    else:
+        store = TokenStore(hass, entry)
+        auth = SwiggyAuthManager(hass, store)
+    client = SwiggyApiClient(hass, auth, entry.data)
 
     # ── Coordinator ───────────────────────────────────────────────────────────
     coordinator = SwiggyDataUpdateCoordinator(hass, entry, client)

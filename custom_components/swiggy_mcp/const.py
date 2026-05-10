@@ -46,3 +46,8 @@ EVENT_ORDER_DELIVERED = f"{DOMAIN}_order_delivered"
 SERVICE_REORDER_LAST = "reorder_last"
 SERVICE_ADD_TO_CART = "add_to_cart"
 SERVICE_CLEAR_CART = "clear_cart"
+
+# ── Add-on mode ───────────────────────────────────────────────────────────────
+CONF_USE_ADDON = "use_addon"
+CONF_ADDON_URL = "addon_url"
+DEFAULT_ADDON_URL = "http://homeassistant.local:9584"

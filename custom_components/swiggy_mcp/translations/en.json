@@ -4,8 +4,18 @@
     "step": {
       "user": {
         "title": "Connect your Swiggy account",
-        "description": "Click **Submit** to be redirected to Swiggy's login page. You'll authorise this Home Assistant instance to access your Swiggy account.\n\nNo token entry required — auth is handled securely via OAuth 2.1.",
-        "data": {}
+        "description": "Choose how this integration connects to Swiggy.\n\n**Add-on mode (recommended):** Install the Swiggy MCP Proxy add-on from this repository. It handles OAuth via a simple code-paste flow using `localhost` redirect URIs — no Swiggy whitelist approval needed.\n\n**Direct mode:** Connect directly to Swiggy's MCP servers via OAuth 2.1. May show a whitelist error for new clients.",
+        "data": {
+          "use_addon": "Use Swiggy MCP Proxy add-on (recommended)"
+        }
+      },
+      "addon": {
+        "title": "Swiggy MCP Proxy Add-on",
+        "description": "Enter the URL where the Swiggy MCP Proxy add-on is running. Make sure you have logged in to Swiggy via the add-on's UI first.\n\nDefault: `http://homeassistant.local:9584`",
+        "data": {
+          "addon_url": "Add-on URL",
+          "poll_interval": "Poll Interval (seconds)"
+        }
       },
       "address": {
         "title": "Delivery address & polling",
@@ -17,7 +27,7 @@
       }
     },
     "error": {
-      "cannot_connect": "Unable to reach Swiggy servers. Check your internet connection.",
+      "cannot_connect": "Unable to reach Swiggy servers or the add-on. Check your network and that the add-on is running.",
       "invalid_auth": "Authorisation failed or was cancelled. Please try again.",
       "unknown": "Unexpected error. Check the Home Assistant logs for details."
     },

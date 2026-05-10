@@ -39,7 +39,7 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
         client: SwiggyApiClient,
     ) -> None:
         self.client = client  # exposed so services.py can call cart methods
-        self._address_id: str = entry.data[CONF_ADDRESS_ID]
+        self._address_id: str = entry.data.get(CONF_ADDRESS_ID, "")
         self._prev_status: str | None = None
 
         interval = timedelta(
