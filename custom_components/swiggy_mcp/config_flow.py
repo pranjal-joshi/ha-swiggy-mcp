@@ -202,7 +202,7 @@ class SwiggyMcpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ),
                 }
             ),
-            description_placeholders={"addon_url": DEFAULT_ADDON_URL},
+            description_placeholders={"default_url": DEFAULT_ADDON_URL},
             errors=errors,
         )
 

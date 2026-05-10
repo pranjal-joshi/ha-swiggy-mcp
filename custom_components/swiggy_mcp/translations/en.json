@@ -11,7 +11,7 @@
       },
       "addon": {
         "title": "Swiggy MCP Proxy Add-on",
-        "description": "Enter the URL where the Swiggy MCP Proxy add-on is running. Make sure you have logged in to Swiggy via the add-on's UI first.\n\nDefault: `http://homeassistant.local:9584`",
+        "description": "Enter the URL where the Swiggy MCP Proxy add-on is running (default: {default_url}). Make sure you have logged in to Swiggy via the add-on UI first.",
         "data": {
           "addon_url": "Add-on URL",
           "poll_interval": "Poll Interval (seconds)"
