@@ -53,27 +53,13 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
     async def _async_update_data(self) -> dict:
-        """Fetch latest order from Swiggy; returns normalised state dict."""
-        try:
-            # In add-on mode address_id may be empty — fetch it lazily
-            if not self._address_id:
-                addresses = await self.client.get_addresses()
-                if addresses:
-                    self._address_id = addresses[0].get("id", "")
-                    _LOGGER.debug("Resolved address_id from Swiggy: %s", self._address_id)
+        """Fetch latest order from Swiggy; returns normalised state dict.
 
-            orders_data = await self.client.get_food_orders(self._address_id, count=1)
-        except ConfigEntryAuthFailed:
-            raise  # let HA handle reauth
-        except UpdateFailed:
-            raise
-        except Exception as err:
-            raise UpdateFailed(f"Error fetching Swiggy orders: {err}") from err
-
-        orders = (orders_data or {}).get("orders") or []
-        active = orders[0] if orders else None
-
-        result: dict = {
+        Address and order fetch failures are treated as data issues, not
+        setup failures — they return an empty state so HA setup succeeds
+        and retries on the next poll interval. Only auth failures re-raise.
+        """
+        empty: dict = {
             "order_active": False,
             "order_id": None,
             "order_status": None,
@@ -82,6 +68,37 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
             "eta": None,
             "items": None,
         }
+
+        try:
+            # In add-on mode address_id may be empty — fetch it lazily
+            if not self._address_id:
+                try:
+                    addresses = await self.client.get_addresses()
+                    if addresses:
+                        self._address_id = addresses[0].get("id", "")
+                        _LOGGER.debug("Resolved address_id from Swiggy: %s", self._address_id)
+                    else:
+                        _LOGGER.warning("Swiggy returned no addresses; will retry next poll")
+                        return empty
+                except UpdateFailed as err:
+                    _LOGGER.warning("Could not fetch addresses: %s; will retry next poll", err)
+                    return empty
+
+            orders_data = await self.client.get_food_orders(self._address_id, count=1)
+
+        except ConfigEntryAuthFailed:
+            raise  # let HA trigger reauth banner
+        except UpdateFailed as err:
+            _LOGGER.warning("Swiggy order fetch failed: %s; returning empty state", err)
+            return empty
+        except Exception as err:
+            _LOGGER.warning("Unexpected error fetching Swiggy orders: %s", err)
+            return empty
+
+        orders = (orders_data or {}).get("orders") or []
+        active = orders[0] if orders else None
+
+        result: dict = dict(empty)
 
         if active:
             status = active.get("status") or active.get("orderStatus")

@@ -38,17 +38,44 @@ def _mcp_payload(name: str, arguments: dict, req_id: int = 1) -> dict:
     }
 
 
+def _safe_mcp_text_to_data(text: Any) -> Any:
+    """Safely parse the text field from an MCP content item.
+
+    Accepts:
+      - None / empty string       → return None
+      - dict / list               → return as-is (already parsed)
+      - valid JSON string         → parse and return
+      - plain text / invalid JSON → log snippet, raise UpdateFailed
+    """
+    if text is None:
+        return None
+    if isinstance(text, (dict, list)):
+        return text
+    if not isinstance(text, str):
+        return None
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as err:
+        _LOGGER.debug("Non-JSON MCP payload: %r", text[:500])
+        raise UpdateFailed("Swiggy returned an invalid response payload") from err
+
+
 def _parse_mcp_data(raw: dict) -> Any:
     """Extract .data from a successful MCP response envelope."""
-    result = raw.get("result", {})
-    content = result.get("content", [])
+    result = raw.get("result") or {}
+    content = result.get("content") or []
     if not content:
         return None
-    text = content[0].get("text", "{}")
-    parsed = json.loads(text) if isinstance(text, str) else text
-    if not parsed.get("success", True):
+    text = content[0].get("text")
+    parsed = _safe_mcp_text_to_data(text)
+    if parsed is None:
+        return None
+    if isinstance(parsed, dict) and not parsed.get("success", True):
         raise UpdateFailed(parsed.get("error", {}).get("message", "Swiggy error"))
-    return parsed.get("data")
+    return parsed.get("data") if isinstance(parsed, dict) else parsed
 
 
 class SwiggyApiClient:
@@ -76,7 +103,7 @@ class SwiggyApiClient:
 
     async def _post(self, service: str, payload: dict, *, _retry: bool = True) -> dict:
         """POST a JSON-RPC payload; handles 401 with one forced refresh+retry.
-        Handles both plain JSON and SSE (text/event-stream) responses.
+        Reads the response body once and handles JSON, SSE, and error bodies.
         """
         url = self._resolve_url(service)
         session = async_get_clientsession(self._hass)
@@ -92,38 +119,49 @@ class SwiggyApiClient:
             headers["Authorization"] = f"Bearer {token}"
 
         async with session.post(url, json=payload, headers=headers) as resp:
+            # Read body once — needed for both error messages and parsing
+            body = await resp.text()
+
             if resp.status == 401:
+                _LOGGER.debug("Swiggy 401 body: %r", body[:200])
                 if self._use_addon:
                     raise UpdateFailed(
-                        "Add-on returned 401 — open the Swiggy MCP Proxy add-on UI and re-authenticate"
+                        "Add-on returned 401 - open the Swiggy MCP Proxy add-on UI and re-authenticate"
                     )
                 if _retry and self._auth:
-                    _LOGGER.warning("Got 401 — forcing token refresh and retrying once")
+                    _LOGGER.warning("Got 401 - forcing token refresh and retrying once")
                     await self._auth._async_refresh()
                     return await self._post(service, payload, _retry=False)
                 raise ConfigEntryAuthFailed(
-                    "Authentication failed after token refresh — please re-authenticate"
+                    "Authentication failed after token refresh - please re-authenticate"
                 )
 
-            if resp.status >= 500:
-                raise UpdateFailed(f"Swiggy server error: HTTP {resp.status}")
-
             if resp.status not in (200, 201):
-                raise UpdateFailed(f"Swiggy unexpected status: HTTP {resp.status}")
+                _LOGGER.debug("Swiggy HTTP %s body: %r", resp.status, body[:500])
+                raise UpdateFailed(
+                    f"Swiggy unexpected status: HTTP {resp.status} - {body[:200]}"
+                )
 
+            # Successful response — parse JSON or SSE
             content_type = resp.headers.get("Content-Type", "")
             if "text/event-stream" in content_type:
-                # SSE response — extract first data: line
-                raw = await resp.text()
-                for line in raw.splitlines():
+                for line in body.splitlines():
                     line = line.strip()
                     if line.startswith("data:"):
-                        payload_str = line[5:].strip()
-                        if payload_str and payload_str != "[DONE]":
-                            return json.loads(payload_str)
+                        data_str = line[5:].strip()
+                        if data_str and data_str != "[DONE]":
+                            try:
+                                return json.loads(data_str)
+                            except json.JSONDecodeError:
+                                _LOGGER.debug("Non-JSON SSE data line: %r", data_str[:500])
+                                raise UpdateFailed("Swiggy SSE response contained invalid JSON")
                 raise UpdateFailed("SSE response contained no data: payload")
 
-            return await resp.json()
+            try:
+                return json.loads(body)
+            except json.JSONDecodeError:
+                _LOGGER.debug("Non-JSON Swiggy response: %r", body[:500])
+                raise UpdateFailed("Swiggy returned a non-JSON response")
 
     # ── Public MCP tool wrappers ──────────────────────────────────────────────
 

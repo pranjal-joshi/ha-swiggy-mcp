@@ -33,7 +33,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.network import get_url
 
 from .auth.pkce import generate_code_challenge, generate_code_verifier
-from .api.client import SwiggyApiClient
+from .api.client import SwiggyApiClient, _safe_mcp_text_to_data
 from .const import (
     CONF_ACCESS_TOKEN,
     CONF_ADDRESS_ID,
@@ -283,16 +283,21 @@ class SwiggyMcpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             headers = {
                 "Authorization": f"Bearer {self._access_token}",
                 "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
             }
             from .const import SWIGGY_FOOD_URL
-            payload = {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "get_addresses", "arguments": {}}, "id": 1}
-            async with session.post(SWIGGY_FOOD_URL, json=payload, headers=headers) as resp:
-                raw = await resp.json()
-            content = raw.get("result", {}).get("content", [])
+            mcp_payload = {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "get_addresses", "arguments": {}}, "id": 1}
+            async with session.post(SWIGGY_FOOD_URL, json=mcp_payload, headers=headers) as resp:
+                raw_text = await resp.text()
+            try:
+                raw = json.loads(raw_text)
+            except json.JSONDecodeError:
+                _LOGGER.warning("get_addresses returned non-JSON: %r", raw_text[:200])
+                raw = {}
+            content = (raw.get("result") or {}).get("content") or []
             if content:
-                text = content[0].get("text", "{}")
-                parsed = json.loads(text) if isinstance(text, str) else text
-                self._addresses = parsed.get("data", {}).get("addresses", [])
+                parsed = _safe_mcp_text_to_data(content[0].get("text"))
+                self._addresses = (parsed or {}).get("data", {}).get("addresses", []) if isinstance(parsed, dict) else []
         except Exception:
             _LOGGER.warning("Could not fetch addresses during setup")
             self._addresses = []
