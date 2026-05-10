@@ -62,7 +62,9 @@ async def proxy_request(
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
-        "Accept": "application/json",
+        # MCP Streamable HTTP transport requires both types in Accept.
+        # Without text/event-stream Swiggy returns HTTP 406.
+        "Accept": "application/json, text/event-stream",
     }
 
     async with session.post(target_url, data=request_body, headers=headers) as resp:

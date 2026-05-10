@@ -79,7 +79,12 @@ class SwiggyApiClient:
         url = self._resolve_url(service)
         session = async_get_clientsession(self._hass)
 
-        headers = {"Content-Type": "application/json"}
+        # MCP Streamable HTTP transport requires both MIME types in Accept.
+        # Without text/event-stream the server returns HTTP 406.
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
         if not self._use_addon and self._auth:
             token = await self._auth.async_get_access_token()
             headers["Authorization"] = f"Bearer {token}"
