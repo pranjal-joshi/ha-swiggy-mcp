@@ -67,6 +67,8 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
             "billed_amount": None,
             "eta": None,
             "items": None,
+            "cart_items": None,
+            "cart_total": None,
         }
 
         try:
@@ -127,5 +129,15 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
                         EVENT_ORDER_DELIVERED, {"order_id": result["order_id"]}
                     )
                 self._prev_status = status
+
+        # Fetch cart contents (non-fatal — empty on any failure)
+        try:
+            cart = await self.client.get_cart("food", self._address_id)
+            result["cart_items"] = ", ".join(cart.get("items") or []) or None
+            result["cart_total"] = cart.get("total")
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Cart fetch failed (non-fatal): %s", err)
+            result["cart_items"] = None
+            result["cart_total"] = None
 
         return result

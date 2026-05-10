@@ -74,6 +74,19 @@ SENSORS: tuple[SwiggyMcpSensorDescription, ...] = (
         name="Swiggy Order ID",
         icon="mdi:identifier",
     ),
+    SwiggyMcpSensorDescription(
+        key="cart_items",
+        coordinator_key="cart_items",
+        name="Swiggy Cart Items",
+        icon="mdi:cart-outline",
+    ),
+    SwiggyMcpSensorDescription(
+        key="cart_total",
+        coordinator_key="cart_total",
+        name="Swiggy Cart Total",
+        icon="mdi:currency-inr",
+        native_unit_of_measurement="₹",
+    ),
 )
 
 

@@ -93,24 +93,57 @@ def _parse_addresses_text(text: str) -> list[dict]:
 
 
 def _parse_orders_text(text: str) -> dict:
-    """Best-effort parse of Swiggy's plain-text order response.
-
-    Returns a dict with an 'orders' key. If we can't extract structured
-    data, returns empty orders so the coordinator shows unknown state
-    rather than crashing.
-    """
+    """Best-effort parse of Swiggy's plain-text order response."""
     _LOGGER.debug("Plain-text order response: %r", text[:500])
-    # Swiggy might return "No active orders" or similar
     lower = text.lower()
     if any(phrase in lower for phrase in ("no active", "no order", "no current")):
         return {"orders": []}
-    # We can't reliably parse rich order data from plain text yet.
-    # Return empty and let sensors show unknown until we see the format.
     _LOGGER.warning(
         "get_food_orders returned plain text (not JSON) — cannot parse order state. "
         "Raw (first 300 chars): %r", text[:300]
     )
     return {"orders": []}
+
+
+def _parse_cart_text(text: str) -> dict:
+    """Best-effort parse of Swiggy's plain-text cart response.
+
+    Handles:
+      - 'Your cart is empty' → {items: [], total: None}
+      - Numbered item lists with prices → extract names
+      - Any other text → log and return empty
+    """
+    lower = text.lower()
+    if any(p in lower for p in ("cart is empty", "empty cart", "no items")):
+        return {"items": [], "total": None}
+
+    items = []
+    total = None
+
+    # Match lines like: '1. Item Name x2 - ₹120' or '1. Item Name (x2)'
+    item_pattern = re.compile(r"^\d+\.\s+(.+?)(?:\s+[x×](\d+))?(?:\s*[-–]\s*[\u20b9₹Rs.]?[\d.,]+)?\s*$")
+    for line in text.splitlines():
+        line = line.strip()
+        m = item_pattern.match(line)
+        if m:
+            name = m.group(1).strip()
+            qty = int(m.group(2)) if m.group(2) else 1
+            # Repeat name for qty > 1 or just append once with qty suffix
+            items.append(f"{name} x{qty}" if qty > 1 else name)
+
+    # Try to extract total from lines like 'Total: ₹349' or 'Grand Total: 349'
+    total_pattern = re.compile(r"(?:grand\s+)?total[:\s]+[\u20b9₹Rs.]*([\d.,]+)", re.IGNORECASE)
+    m = total_pattern.search(text)
+    if m:
+        try:
+            total = float(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+
+    if not items:
+        _LOGGER.debug("Could not parse cart items from plain text: %r", text[:300])
+
+    return {"items": items, "total": total}
 
 
 class SwiggyApiClient:
@@ -284,3 +317,36 @@ class SwiggyApiClient:
         # Plain text like "Flushed Food cart successfully" — treat as success
         _LOGGER.info("flush_cart response: %s", text[:200])
         return {"success": True, "message": text}
+
+    async def get_cart(self, service: str, address_id: str) -> dict:
+        """Fetch current cart contents for food or instamart.
+
+        Returns a dict with 'items' (list of name strings) and 'total' (float).
+        Handles both JSON and plain-text responses from Swiggy MCP.
+        """
+        svc = "instamart" if service == "instamart" else "food"
+        tool = "get_instamart_cart" if service == "instamart" else "get_food_cart"
+        try:
+            raw = await self._post(
+                svc,
+                _mcp_payload(tool, {"addressId": address_id}),
+            )
+        except UpdateFailed as err:
+            _LOGGER.debug("get_cart(%s) failed: %s", service, err)
+            return {"items": [], "total": None}
+
+        text = _extract_content_text(raw)
+        if text is None:
+            return {"items": [], "total": None}
+
+        parsed = _try_parse_json(text)
+        if parsed is not None:
+            data = (parsed.get("data") or parsed) if isinstance(parsed, dict) else {}
+            items = data.get("items", []) or data.get("cartItems", [])
+            names = [i.get("name") or i.get("itemName", "") for i in items if isinstance(i, dict)]
+            total = data.get("total") or data.get("grandTotal") or data.get("billTotal")
+            return {"items": names, "total": total}
+
+        # Plain-text response — best-effort parse
+        _LOGGER.debug("get_cart(%s) plain-text: %r", service, text[:500])
+        return _parse_cart_text(text)
