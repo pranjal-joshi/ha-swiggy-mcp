@@ -33,7 +33,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.network import get_url
 
 from .auth.pkce import generate_code_challenge, generate_code_verifier
-from .api.client import SwiggyApiClient, _safe_mcp_text_to_data
+from .api.client import SwiggyApiClient, _try_parse_json, _extract_content_text
 from .const import (
     CONF_ACCESS_TOKEN,
     CONF_ADDRESS_ID,
@@ -296,7 +296,8 @@ class SwiggyMcpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 raw = {}
             content = (raw.get("result") or {}).get("content") or []
             if content:
-                parsed = _safe_mcp_text_to_data(content[0].get("text"))
+                text = content[0].get("text")
+                parsed = _try_parse_json(text) if isinstance(text, str) else text
                 self._addresses = (parsed or {}).get("data", {}).get("addresses", []) if isinstance(parsed, dict) else []
         except Exception:
             _LOGGER.warning("Could not fetch addresses during setup")
