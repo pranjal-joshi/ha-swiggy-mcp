@@ -26,6 +26,7 @@ import time
 
 import aiohttp
 from aiohttp import web
+from aiohttp.web_middlewares import normalize_path_middleware
 
 from storage import load_tokens, save_tokens, clear_tokens
 from oauth import do_dcr, build_auth_url, extract_code_from_url, exchange_code
@@ -243,7 +244,11 @@ async def on_cleanup(app: web.Application) -> None:
 
 
 def create_app() -> web.Application:
-    app = web.Application()
+    # normalize_path_middleware merges consecutive slashes (e.g. //// → /)
+    # which HA ingress can produce when proxying add-on UI requests.
+    app = web.Application(middlewares=[
+        normalize_path_middleware(append_slash=False, remove_slash=True, merge_slashes=True),
+    ])
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
 
