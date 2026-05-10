@@ -63,9 +63,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
-    # ── LLM API ───────────────────────────────────────────────────────────────
-    if not any(api.id == SWIGGY_LLM_API_ID for api in ha_llm.async_get_apis(hass)):
-        ha_llm.async_register_api(hass, SwiggyLLMApi(hass))
+    # ── LLM API (optional — requires HA 2024.4+) ────────────────────────────
+    try:
+        if not any(api.id == SWIGGY_LLM_API_ID for api in ha_llm.async_get_apis(hass)):
+            ha_llm.async_register_api(hass, SwiggyLLMApi(hass))
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("LLM API registration skipped (HA version too old or API unavailable)")
 
     # ── Platforms + services ──────────────────────────────────────────────────
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

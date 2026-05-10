@@ -70,7 +70,7 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             raise UpdateFailed(f"Error fetching Swiggy orders: {err}") from err
 
-        orders = (orders_data or {}).get("orders", [])
+        orders = (orders_data or {}).get("orders") or []
         active = orders[0] if orders else None
 
         result: dict = {

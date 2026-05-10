@@ -23,6 +23,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import voluptuous as vol
+import aiohttp
 
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
@@ -172,7 +173,10 @@ class SwiggyMcpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Quick connectivity check
             try:
                 session = async_get_clientsession(self.hass)
-                async with session.get(f"{addon_url}/health", timeout=5) as resp:
+                async with session.get(
+                    f"{addon_url}/health",
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as resp:
                     if resp.status != 200:
                         errors["base"] = "cannot_connect"
             except Exception:
