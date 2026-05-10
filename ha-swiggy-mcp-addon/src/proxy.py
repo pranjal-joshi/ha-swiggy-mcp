@@ -1,4 +1,10 @@
-"""MCP proxy — forwards requests to mcp.swiggy.com with stored Bearer token."""
+"""MCP proxy — forwards requests to mcp.swiggy.com with stored Bearer token.
+
+Swiggy MCP uses the Streamable HTTP transport spec. Responses may be:
+  - Content-Type: application/json  → plain JSON, pass through directly
+  - Content-Type: text/event-stream → SSE stream, extract data: lines and
+    return the first non-empty JSON payload as application/json
+"""
 import logging
 import time
 
@@ -15,6 +21,40 @@ SWIGGY_ENDPOINTS = {
     "im": "https://mcp.swiggy.com/im",
     "dineout": "https://mcp.swiggy.com/dineout",
 }
+
+
+def _extract_from_sse(raw_bytes: bytes) -> bytes:
+    """Parse SSE body and return the first data: payload as plain bytes.
+
+    SSE format:
+        data: {"jsonrpc":"2.0","result":{...},"id":1}\n\n
+
+    We extract all data: lines, concatenate them (for multi-chunk events),
+    and return the result so the HA integration can JSON-parse it normally.
+    """
+    text = raw_bytes.decode("utf-8", errors="replace")
+    collected = []
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("data:"):
+            payload = line[5:].strip()
+            if payload and payload != "[DONE]":
+                collected.append(payload)
+    if collected:
+        # Most MCP responses fit in a single data: line
+        return collected[0].encode("utf-8")
+    _LOGGER.warning("SSE response contained no data: lines; raw: %r", text[:200])
+    return b"{}"
+
+
+async def _read_mcp_response(resp: aiohttp.ClientResponse) -> bytes:
+    """Read an MCP HTTP response, normalising SSE to plain JSON bytes."""
+    content_type = resp.headers.get("Content-Type", "")
+    raw = await resp.read()
+    if "text/event-stream" in content_type:
+        _LOGGER.debug("SSE response detected, extracting data: payload")
+        return _extract_from_sse(raw)
+    return raw
 
 
 async def _get_valid_token(session: aiohttp.ClientSession):
@@ -69,13 +109,11 @@ async def proxy_request(
 
     async with session.post(target_url, data=request_body, headers=headers) as resp:
         status = resp.status
-        body = await resp.read()
-        resp_headers = {
-            "Content-Type": resp.headers.get("Content-Type", "application/json"),
-        }
+        body = await _read_mcp_response(resp)
+        # Always return application/json — HA integration expects JSON
+        resp_headers = {"Content-Type": "application/json"}
 
         if status == 401:
-            # Token rejected — clear and signal reauth needed
             tokens = load_tokens()
             tokens.pop("access_token", None)
             save_tokens(tokens)

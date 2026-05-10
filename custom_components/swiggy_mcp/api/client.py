@@ -75,7 +75,9 @@ class SwiggyApiClient:
     # ── Transport ─────────────────────────────────────────────────────────────
 
     async def _post(self, service: str, payload: dict, *, _retry: bool = True) -> dict:
-        """POST a JSON-RPC payload; handles 401 with one forced refresh+retry."""
+        """POST a JSON-RPC payload; handles 401 with one forced refresh+retry.
+        Handles both plain JSON and SSE (text/event-stream) responses.
+        """
         url = self._resolve_url(service)
         session = async_get_clientsession(self._hass)
 
@@ -108,6 +110,18 @@ class SwiggyApiClient:
 
             if resp.status not in (200, 201):
                 raise UpdateFailed(f"Swiggy unexpected status: HTTP {resp.status}")
+
+            content_type = resp.headers.get("Content-Type", "")
+            if "text/event-stream" in content_type:
+                # SSE response — extract first data: line
+                raw = await resp.text()
+                for line in raw.splitlines():
+                    line = line.strip()
+                    if line.startswith("data:"):
+                        payload_str = line[5:].strip()
+                        if payload_str and payload_str != "[DONE]":
+                            return json.loads(payload_str)
+                raise UpdateFailed("SSE response contained no data: payload")
 
             return await resp.json()
 
