@@ -1,14 +1,13 @@
-reorder_last:
-  name: Reorder Last Order
-  description: Re-places your most recent Swiggy food order (same items, same restaurant).
-
 add_to_cart:
   name: Add to Cart
-  description: Add an item to your Swiggy Food or Instamart cart.
+  description: >
+    Search for an item by name and add it to your Swiggy Food or Instamart cart.
+    For Food: searches menus and adds the first matching dish.
+    For Instamart: searches products and adds by spinId.
   fields:
     item:
       name: Item
-      description: Name of the item to add (e.g. "Maggi Noodles 70g")
+      description: Name of the item to search for and add (e.g. "Maggi Noodles 70g", "Chicken Biryani")
       required: true
       example: "Maggi Noodles 70g"
       selector:
@@ -24,7 +23,7 @@ add_to_cart:
           mode: box
     service:
       name: Service
-      description: Which Swiggy service to use — food or instamart
+      description: Which Swiggy service — food or instamart
       default: instamart
       selector:
         select:
@@ -34,7 +33,7 @@ add_to_cart:
 
 clear_cart:
   name: Clear Cart
-  description: Remove all items from your Swiggy cart.
+  description: Remove all items from your Swiggy Food or Instamart cart.
   fields:
     service:
       name: Service
@@ -45,3 +44,25 @@ clear_cart:
           options:
             - food
             - instamart
+
+place_order:
+  name: Place Food Order
+  description: >
+    Place your current Swiggy food delivery order (Cash on Delivery).
+    ⚠️ IRREVERSIBLE — orders cannot be cancelled after placement.
+    Cart value must be under ₹1000 (Swiggy MCP beta limit).
+    Always review your cart using the Swiggy Cart Items sensor before calling this.
+  fields:
+    confirmed:
+      name: Confirmed
+      description: Must be true to confirm you want to place the order
+      required: true
+      selector:
+        boolean:
+
+reorder_last:
+  name: Reorder Last Order
+  description: >
+    Fetch details of the last order for reference.
+    Note: Swiggy MCP does not support automatic reorder — use this to see
+    what was ordered, then use add_to_cart to rebuild the cart manually.
