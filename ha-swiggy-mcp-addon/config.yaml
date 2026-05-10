@@ -20,12 +20,6 @@ hassio_api: false
 map:
   - data:rw
 options:
-  swiggy_services:
-    - food
-    - instamart
-    - dineout
   log_level: info
 schema:
-  swiggy_services:
-    - "food|instamart|dineout"
   log_level: list(debug|info|warning|error)
