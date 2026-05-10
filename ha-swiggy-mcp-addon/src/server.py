@@ -24,9 +24,10 @@ import os
 import secrets
 import time
 
+import re
+
 import aiohttp
 from aiohttp import web
-from aiohttp.web_middlewares import normalize_path_middleware
 
 from storage import load_tokens, save_tokens, clear_tokens
 from oauth import do_dcr, build_auth_url, extract_code_from_url, exchange_code
@@ -244,11 +245,17 @@ async def on_cleanup(app: web.Application) -> None:
 
 
 def create_app() -> web.Application:
-    # normalize_path_middleware merges consecutive slashes (e.g. //// → /)
-    # which HA ingress can produce when proxying add-on UI requests.
-    app = web.Application(middlewares=[
-        normalize_path_middleware(append_slash=False, remove_slash=True, merge_slashes=True),
-    ])
+    @web.middleware
+    async def merge_slashes(request: web.Request, handler):
+        """Collapse repeated slashes in-place with no redirect.
+        HA ingress forwards //// — normalize to / before routing.
+        """
+        normalized = re.sub(r"/+", "/", request.path)
+        if normalized != request.path:
+            request = request.clone(rel_url=request.rel_url.with_path(normalized))
+        return await handler(request)
+
+    app = web.Application(middlewares=[merge_slashes])
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
 
