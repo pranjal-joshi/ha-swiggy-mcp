@@ -45,7 +45,7 @@ def _safe_mcp_text_to_data(text: Any) -> Any:
       - None / empty string       → return None
       - dict / list               → return as-is (already parsed)
       - valid JSON string         → parse and return
-      - plain text / invalid JSON → log snippet, raise UpdateFailed
+      - plain text / invalid JSON → log snippet at WARNING, raise UpdateFailed
     """
     if text is None:
         return None
@@ -59,15 +59,17 @@ def _safe_mcp_text_to_data(text: Any) -> Any:
     try:
         return json.loads(text)
     except json.JSONDecodeError as err:
-        _LOGGER.debug("Non-JSON MCP payload: %r", text[:500])
-        raise UpdateFailed("Swiggy returned an invalid response payload") from err
+        _LOGGER.warning("Non-JSON MCP payload (first 500 chars): %r", text[:500])
+        raise UpdateFailed("Swiggy returned an invalid response payload; will retry next poll") from err
 
 
 def _parse_mcp_data(raw: dict) -> Any:
     """Extract .data from a successful MCP response envelope."""
+    _LOGGER.debug("Raw MCP envelope: %r", str(raw)[:1000])
     result = raw.get("result") or {}
     content = result.get("content") or []
     if not content:
+        _LOGGER.debug("MCP response had empty content list; result keys: %s", list(result.keys()))
         return None
     text = content[0].get("text")
     parsed = _safe_mcp_text_to_data(text)
@@ -137,7 +139,7 @@ class SwiggyApiClient:
                 )
 
             if resp.status not in (200, 201):
-                _LOGGER.debug("Swiggy HTTP %s body: %r", resp.status, body[:500])
+                _LOGGER.warning("Swiggy HTTP %s body: %r", resp.status, body[:500])
                 raise UpdateFailed(
                     f"Swiggy unexpected status: HTTP {resp.status} - {body[:200]}"
                 )
