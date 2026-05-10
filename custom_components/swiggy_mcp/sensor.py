@@ -7,11 +7,23 @@ from typing import Any
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import SwiggyDataUpdateCoordinator
+
+
+def _device_info(entry: ConfigEntry) -> DeviceInfo:
+    return DeviceInfo(
+        identifiers={(DOMAIN, entry.entry_id)},
+        name="Swiggy MCP",
+        manufacturer="Swiggy",
+        model="MCP Integration",
+        entry_type=DeviceEntryType.SERVICE,
+        configuration_url="https://github.com/pranjal-joshi/ha-swiggy-mcp",
+    )
 
 
 @dataclass(frozen=True)
@@ -73,7 +85,7 @@ async def async_setup_entry(
     """Set up Swiggy MCP sensors."""
     coordinator: SwiggyDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
-        SwiggyMcpSensor(coordinator, description) for description in SENSORS
+        SwiggyMcpSensor(coordinator, description, entry) for description in SENSORS
     )
 
 
@@ -87,11 +99,13 @@ class SwiggyMcpSensor(CoordinatorEntity[SwiggyDataUpdateCoordinator], SensorEnti
         self,
         coordinator: SwiggyDataUpdateCoordinator,
         description: SwiggyMcpSensorDescription,
+        entry: ConfigEntry,
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
-        self._attr_unique_id = f"{DOMAIN}_{description.key}"
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_{description.key}"
         self._attr_icon = description.icon
+        self._attr_device_info = _device_info(entry)
 
     @property
     def native_value(self) -> Any:
