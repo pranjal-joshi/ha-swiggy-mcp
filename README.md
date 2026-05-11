@@ -32,25 +32,18 @@
 | **Swiggy MCP Proxy Add-on** | Runs on your HA host. Handles OAuth via a simple code-paste flow, stores tokens securely, and proxies all MCP calls to Swiggy. |
 | **swiggy_mcp HACS Integration** | Exposes live sensors, HA services, and events. Talks to the local add-on — no tokens, no OAuth complexity. |
 
-```
-┌────────────────────────────────────────────────┐
-│  Home Assistant                                │
-│                                                │
-│  [Swiggy MCP Proxy Add-on] — port 9584         │
-│    • OAuth 2.1 + PKCE (code-paste flow)        │
-│    • localhost redirect URI (whitelisted ✓)    │
-│    • Encrypted token storage in /data/         │
-│    • Auto token refresh                        │
-│         ↕                                      │
-│  [swiggy_mcp HACS Integration]                 │
-│    • Live sensors  (status, ETA, amount…)      │
-│    • Services      (reorder, cart)             │
-│    • Events        (delivered, out for del.)   │
-│         ↕  http://homeassistant.local:9584     │
-│  [HA Automations / Voice / Assist]             │
-└────────────────────────────────────────────────┘
-         ↕ (proxied with your Bearer token)
-   mcp.swiggy.com  (food / instamart / dineout)
+```mermaid
+graph TD
+    subgraph HA["Home Assistant"]
+        addon["🔐 Swiggy MCP Proxy Add-on\n─────────────────────\nOAuth 2.1 + PKCE\nlocalhost redirect URI ✓\nEncrypted token storage\nAuto token refresh\nport 9584"]
+        integration["📦 swiggy_mcp HACS Integration\n─────────────────────\nLive sensors · Services · Events\nPolls every N seconds"]
+        consumers["🤖 HA Automations / Voice / Assist"]
+
+        integration -- "http://homeassistant.local:9584" --> addon
+        consumers -- "call service / read sensor" --> integration
+    end
+
+    addon -- "Bearer token (proxied)" --> swiggy["☁️ mcp.swiggy.com\nfood · instamart · dineout"]
 ```
 
 **Why the add-on?** Swiggy's OAuth server only whitelists specific redirect URIs. `http://localhost` is on that list — HA's external callback URL is not. The add-on performs OAuth using a `localhost` redirect URI (valid per [RFC 8252](https://www.rfc-editor.org/rfc/rfc8252)), stores the tokens, and proxies every MCP call with them. The HACS integration just talks to the add-on — no auth complexity.
