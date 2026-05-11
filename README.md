@@ -267,12 +267,46 @@ custom_components/swiggy_mcp/
 │   └── manager.py     Auto-refresh, ConfigEntryAuthFailed on rejection
 ├── api/
 │   └── client.py      MCP HTTP calls — add-on or direct endpoint
+├── llm/
+│   ├── api.py         SwiggyLLMApi — registers intent with HA Assist
+│   └── tools.py       LLM tool definitions (all Swiggy MCP tools)
 ├── config_flow.py     Mode selection → add-on URL or OAuth 2.1 flow
 ├── coordinator.py     Polls every N seconds, fires HA events
-├── sensor.py          Live order sensors
-├── binary_sensor.py   Order active binary sensor
+├── sensor.py          Live Food + Instamart sensors
+├── binary_sensor.py   Food + Instamart order active binary sensors
+├── button.py          Food Clear Cart + Instamart Clear Cart buttons
+├── select.py          Delivery Address dropdown
 └── services.py        reorder_last, add_to_cart, clear_cart
 ```
+
+### Hybrid architecture — direct HTTP + LLM fallback
+
+The integration uses a **two-tier hybrid approach** to handle Swiggy's inconsistent response formats:
+
+```mermaid
+flowchart TD
+    A["swiggy_mcp.add_to_cart\nservice call"] --> B["search_menu via\ndirect HTTP POST"]
+    B --> C{Response type?}
+    C -->|JSON| D["JSON parse\n→ extract restaurantId + itemId"]
+    C -->|Plain text| E["Regex parse\n(_parse_search_menu_text)"]
+    E --> F{IDs found?}
+    F -->|Yes| G["update_food_cart\ndirect HTTP POST"]
+    F -->|No| H["ai_task.generate_data\nLLM extraction fallback"]
+    H --> I{IDs found?}
+    I -->|Yes| G
+    I -->|No| J["Raise UpdateFailed\n— item not found"]
+    D --> G
+    G --> K["Cart updated ✅"]
+
+    style H fill:#FC8019,color:#fff
+    style J fill:#e74c3c,color:#fff
+    style K fill:#27ae60,color:#fff
+```
+
+**Why `ai_task`?**
+Swiggy's `search_menu` tool sometimes returns human-readable text instead of JSON (e.g. formatted restaurant+dish listings). Regex handles the common known formats. For novel or unpredictable formats, `ai_task.generate_data` is used as a last resort — it calls your configured AI assistant (Google Generative AI, OpenAI, etc.) to extract the IDs.
+
+> `ai_task` is a **required dependency** (listed in `manifest.json`). If no AI assistant is configured in HA, the integration still works — the LLM fallback is simply skipped, and the regex parser handles most real-world responses.
 
 ### Auth flow (add-on mode)
 1. **DCR** — Add-on registers itself with Swiggy once, gets a `client_id` stored in `/data/`

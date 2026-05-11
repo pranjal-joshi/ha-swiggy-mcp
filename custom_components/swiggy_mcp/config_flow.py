@@ -31,6 +31,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.network import get_url
+from homeassistant.components import ai_task
 
 from .auth.pkce import generate_code_challenge, generate_code_verifier
 from .api.client import SwiggyApiClient, _try_parse_json, _extract_content_text
@@ -55,6 +56,15 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 OAUTH_CALLBACK_PATH = "/auth/external/callback"
+
+
+def _ai_task_available(hass: HomeAssistant) -> bool:
+    """Return True if at least one ai_task entity is registered in HA."""
+    try:
+        entities = hass.states.async_entity_ids("ai_task")
+        return bool(entities)
+    except Exception:
+        return False
 
 
 async def _do_dcr(hass: HomeAssistant, redirect_uri: str) -> str:
@@ -183,6 +193,12 @@ class SwiggyMcpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
 
             if not errors:
+                if not _ai_task_available(self.hass):
+                    _LOGGER.warning(
+                        "No ai_task entity found. The 'add_to_cart' service will fall back to "
+                        "regex parsing only. Configure an AI assistant (e.g. Google Generative AI, "
+                        "OpenAI) and expose it as an ai_task entity for best results."
+                    )
                 entry_data = {
                     CONF_USE_ADDON: True,
                     CONF_ADDON_URL: addon_url,
@@ -313,6 +329,12 @@ class SwiggyMcpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         import time
 
         if user_input is not None:
+            if not _ai_task_available(self.hass):
+                _LOGGER.warning(
+                    "No ai_task entity found. The 'add_to_cart' service will fall back to "
+                    "regex parsing only. Configure an AI assistant and expose it as an "
+                    "ai_task entity for best results."
+                )
             entry_data = {
                 CONF_USE_ADDON: False,
                 CONF_CLIENT_ID: self._client_id,

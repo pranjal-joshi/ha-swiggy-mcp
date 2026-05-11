@@ -189,6 +189,68 @@ def _parse_orders_text(text: str) -> dict:
     return {"orders": []}
 
 
+async def _resolve_with_ai_task(hass, text: str, item_name: str) -> tuple[str | None, str | None]:
+    """Use ai_task.generate_data to extract restaurantId + itemId from raw text.
+
+    This is the third-tier fallback (after JSON parse and regex) for
+    search_menu responses that are too free-form for regex patterns.
+
+    Returns (restaurant_id, item_id) — both None on failure or if ai_task
+    is unavailable.
+
+    HA 2025.7+ API:
+        result = await ai_task.async_generate_data(
+            hass,
+            task_name="...",
+            instructions="...",
+            structure=voluptuous_schema,
+        )
+        restaurant_id = result.data["restaurant_id"]
+        item_id       = result.data["item_id"]
+    """
+    try:
+        import voluptuous as vol
+        from homeassistant.components import ai_task as _ai_task
+
+        schema = vol.Schema({
+            vol.Required("restaurant_id"): str,
+            vol.Required("item_id"): str,
+        })
+        instructions = (
+            f"You are a JSON extractor. From the following Swiggy search_menu response "
+            f"(searching for '{item_name}'), extract the restaurant ID and menu item ID "
+            f"for the best matching result.\n\n"
+            f"Response text:\n{text[:2000]}\n\n"
+            f"Return ONLY a JSON object with keys 'restaurant_id' and 'item_id'. "
+            f"If you cannot find them, return empty strings."
+        )
+        result = await _ai_task.async_generate_data(
+            hass,
+            task_name=f"swiggy_mcp_resolve_menu_item_{item_name[:30]}",
+            instructions=instructions,
+            structure=schema,
+        )
+        rid = (result.data or {}).get("restaurant_id", "").strip()
+        iid = (result.data or {}).get("item_id", "").strip()
+        if rid and iid:
+            _LOGGER.info(
+                "_resolve_with_ai_task: extracted restaurant=%r item=%r for '%s'",
+                rid, iid, item_name,
+            )
+            return rid, iid
+        _LOGGER.warning(
+            "_resolve_with_ai_task: ai_task returned empty IDs for '%s'", item_name
+        )
+        return None, None
+    except AttributeError:
+        # ai_task.async_generate_data not available in this HA version
+        _LOGGER.debug("ai_task.async_generate_data not available; skipping LLM fallback")
+        return None, None
+    except Exception as err:
+        _LOGGER.warning("_resolve_with_ai_task failed for '%s': %s", item_name, err)
+        return None, None
+
+
 def _parse_cart_text(text: str) -> dict:
     """Best-effort parse of Swiggy's plain-text cart response."""
     lower = text.lower()
@@ -583,10 +645,20 @@ class SwiggyApiClient:
                 if rid and iid:
                     restaurant_id = rid
                     cart_items = [{"itemId": iid, "quantity": quantity, "variants": []}]
+                else:
+                    # Third-tier fallback: ai_task LLM extraction
+                    _LOGGER.warning(
+                        "Regex parse failed for '%s'; trying ai_task LLM fallback.", item_name
+                    )
+                    rid, iid = await _resolve_with_ai_task(self._hass, search_text, item_name)
+                    if rid and iid:
+                        restaurant_id = rid
+                        cart_items = [{"itemId": iid, "quantity": quantity, "variants": []}]
 
         if not restaurant_id or not cart_items:
             _LOGGER.warning(
-                "Could not resolve restaurant/item for '%s' from search_menu; "
+                "Could not resolve restaurant/item for '%s' from search_menu "
+                "(tried JSON parse, regex, and ai_task fallback); "
                 "search_text was: %r",
                 item_name, (search_text or "")[:500],
             )

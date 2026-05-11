@@ -3,7 +3,7 @@
   "name": "Swiggy MCP",
   "codeowners": ["@pranjal-joshi"],
   "config_flow": true,
-  "dependencies": ["http"],
+  "dependencies": ["http", "ai_task"],
   "documentation": "https://github.com/pranjal-joshi/ha-swiggy-mcp",
   "integration_type": "hub",
   "iot_class": "cloud_polling",

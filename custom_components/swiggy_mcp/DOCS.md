@@ -1,5 +1,22 @@
 # Swiggy MCP Integration — User Guide
 
+## Prerequisites
+
+### AI Task (Required dependency)
+
+This integration lists `ai_task` as a required HA dependency. This enables a LLM-powered fallback when Swiggy's `search_menu` tool returns unstructured text that regex cannot parse.
+
+**You do not need to configure an AI assistant for the integration to function.** If no AI assistant is set up, the LLM fallback is silently skipped and the regex parser handles most real-world responses.
+
+To get the best `add_to_cart` reliability, configure one of these AI integrations in HA first:
+- **Google Generative AI** (Settings → Integrations → Google Generative AI)
+- **OpenAI Conversation** (Settings → Integrations → OpenAI Conversation)
+- Any other integration that exposes an `ai_task` entity
+
+Once configured, Swiggy's unrecognised menu response formats will be automatically handled by the LLM.
+
+---
+
 ## Using with the Swiggy MCP Proxy Add-on (Recommended)
 
 The add-on is the easiest and most reliable way to set up this integration. It handles all OAuth complexity using a `localhost` redirect URI that Swiggy has pre-approved.
@@ -43,25 +60,54 @@ To use direct mode: uncheck **Use add-on** during integration setup.
 
 ## Available Entities
 
-### Sensors
+### Sensors — Food
 | Entity | Example |
 |---|---|
-| `sensor.swiggy_order_status` | `Out for Delivery` |
-| `sensor.swiggy_eta` | `12` (minutes) |
-| `sensor.swiggy_restaurant` | `Behrouz Biryani` |
-| `sensor.swiggy_billed_amount` | `349` (₹) |
-| `sensor.swiggy_last_order_items` | `Chicken Biryani, Raita` |
+| `sensor.food_order_status` | `Out for Delivery` |
+| `sensor.food_eta` | `12` (minutes) |
+| `sensor.food_restaurant` | `Behrouz Biryani` |
+| `sensor.food_billed_amount` | `349` (₹) |
+| `sensor.food_order_items` | `Chicken Biryani, Raita` |
+| `sensor.food_order_id` | `ORD123456` |
+| `sensor.food_cart_items` | `Vada Pav, Chai` |
+| `sensor.food_cart_total` | `89` (₹) |
+
+### Sensors — Instamart
+| Entity | Example |
+|---|---|
+| `sensor.instamart_order_status` | `Out for Delivery` |
+| `sensor.instamart_eta` | `8` (minutes) |
+| `sensor.instamart_store` | `Swiggy Instamart` |
+| `sensor.instamart_billed_amount` | `249` (₹) |
+| `sensor.instamart_order_items` | `Maggi, Milk, Bread` |
+| `sensor.instamart_order_id` | `ORD789012` |
+| `sensor.instamart_cart_items` | `Eggs x12, Butter` |
+| `sensor.instamart_cart_total` | `155` (₹) |
 
 ### Binary Sensors
 | Entity | Description |
 |---|---|
-| `binary_sensor.swiggy_order_active` | `on` when an active order exists |
+| `binary_sensor.food_order_active` | `on` when an active food order exists |
+| `binary_sensor.instamart_order_active` | `on` when an active Instamart order exists |
+
+### Buttons
+| Entity | Action |
+|---|---|
+| `button.food_clear_cart` | Instantly clears your food cart |
+| `button.instamart_clear_cart` | Instantly clears your Instamart cart |
+
+### Select
+| Entity | Description |
+|---|---|
+| `select.delivery_address` | Pick your active delivery address from all saved addresses |
 
 ### Events
 | Event | Fired when |
 |---|---|
-| `swiggy_mcp_out_for_delivery` | Order status → Out for Delivery |
-| `swiggy_mcp_order_delivered` | Order status → Delivered |
+| `swiggy_mcp_out_for_delivery` | Food order status → Out for Delivery |
+| `swiggy_mcp_order_delivered` | Food order status → Delivered |
+| `swiggy_mcp_instamart_out_for_delivery` | Instamart order status → Out for Delivery |
+| `swiggy_mcp_instamart_order_delivered` | Instamart order status → Delivered |
 
 ---
 
@@ -172,6 +218,11 @@ Then say: *"What's my Swiggy order status?"* or *"Reorder my last Swiggy order"*
 
 **Direct mode whitelist error**
 - Switch to add-on mode — it uses `localhost` redirect URIs which Swiggy has pre-approved
+
+**`add_to_cart` can't find the item**
+- Swiggy's `search_menu` sometimes returns unstructured text. The integration tries JSON parse → regex → ai_task LLM fallback in order.
+- If all three fail, try a more specific item name (e.g. "Chicken Dum Biryani" instead of "biryani").
+- Configuring an AI assistant (Google Generative AI, OpenAI) dramatically improves success on novel response formats.
 
 ---
 
