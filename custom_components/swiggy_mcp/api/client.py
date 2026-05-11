@@ -105,75 +105,190 @@ def _parse_addresses_text(text: str) -> list[dict]:
     return addresses
 
 
-def _parse_search_menu_text(text: str) -> tuple[str | None, str | None]:
-    """Extract restaurantId and itemId from a plain-text search_menu response.
+def _parse_search_menu_items(text: str) -> list[dict]:
+    """Parse a plain-text search_menu response into a list of structured items.
 
-    Swiggy's MCP server renders search_menu results as human-readable text.
-    We have observed (and defensively handle) several formats:
+    Each returned dict has keys: name (str), restaurant_id (str), item_id (str).
+    Handles the following known plain-text formats emitted by Swiggy's MCP server:
 
-    Format A — numbered list with parenthetical IDs:
-        1. Vada Pav (₹49) - Veg
-           Restaurant: Mumbai Express (ID: 12345)
+    Format A — numbered list with separate label lines:
+        1. Butter Chicken (₹349) - Non-veg
+           Restaurant: Punjab Grill (ID: 12345)
            Item ID: 67890
 
-    Format B — inline key-value:
-        restaurantId: 12345  itemId: 67890
+    Format B — pipe-separated single line:
+        Butter Chicken | Restaurant ID: 12345 | Item ID: 67890
 
-    Format C — JSON-like fragments embedded in text:
-        "restaurantId": "12345"  ...  "id": "67890"
+    Format C — inline JSON-like key-value fragments:
+        "restaurantId": "12345"  ...  "itemId": "67890"  ...  "name": "Butter Chicken"
 
-    Format D — dash-separated on one line:
-        Vada Pav | Restaurant ID: 12345 | Item ID: 67890
+    Format D — restaurant header followed by indented items:
+        Punjab Grill (ID: 12345)
+          - Butter Chicken (Item ID: 67890, ₹349)
 
-    Returns (restaurant_id, item_id) — both None if not found.
+    Returns an empty list if no items can be parsed.
     """
-    restaurant_id: str | None = None
-    item_id: str | None = None
+    items: list[dict] = []
 
-    # ── Restaurant ID patterns (tried in order) ────────────────────────────
-    rid_patterns = [
-        # JSON-style key: "restaurantId": "abc"  or  restaurantId: abc
-        re.compile(r'"?restaurantId"?\s*[=:]\s*"?([A-Za-z0-9_@.-]+)"?'),
-        # Human label: Restaurant: Name (ID: abc)  or  Restaurant ID: abc
-        re.compile(r'[Rr]estaurant\s+(?:ID|Id|id)\s*[=:]\s*"?([A-Za-z0-9_@.-]+)"?'),
-        re.compile(r'[Rr]estaurant\b[^(]*\(ID:\s*([A-Za-z0-9_@.-]+)\)'),
-        # restId / rest_id
-        re.compile(r'"?rest(?:Id|_id)"?\s*[=:]\s*"?([A-Za-z0-9_@.-]+)"?'),
-    ]
-    for pat in rid_patterns:
-        m = pat.search(text)
-        if m:
-            restaurant_id = m.group(1).strip().strip('"')
-            break
+    # ── Format A: numbered list ───────────────────────────────────────────────
+    # Match blocks: first line is the item name/price, subsequent indented lines
+    # give Restaurant ID and Item ID.
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        # Numbered item line: "1. Some Dish Name (₹XX) - ..."
+        name_m = re.match(r"^\d+\.\s+(.+?)(?:\s*[\(（][₹Rs.\d,]+[\)）].*)?$", line)
+        if name_m:
+            name = re.sub(r"\s*[\(（][₹Rs.\d,]+[\)）].*$", "", name_m.group(1)).strip()
+            rid: str | None = None
+            iid: str | None = None
+            # Scan the next few lines for IDs
+            for j in range(i + 1, min(i + 6, len(lines))):
+                sub = lines[j].strip()
+                if not sub or re.match(r"^\d+\.", sub):
+                    break
+                if not rid:
+                    rm = re.search(
+                        r"[Rr]estaurant\b[^(]*\(ID:\s*([A-Za-z0-9_@.-]+)\)"
+                        r"|[Rr]estaurant\s+(?:ID|Id|id)\s*[=:]\s*\"?([A-Za-z0-9_@.-]+)\"?",
+                        sub,
+                    )
+                    if rm:
+                        rid = (rm.group(1) or rm.group(2) or "").strip()
+                if not iid:
+                    im = re.search(
+                        r"[Ii]tem\s+(?:ID|Id|id)\s*[=:]\s*\"?([A-Za-z0-9_@.-]+)\"?",
+                        sub,
+                    )
+                    if im:
+                        iid = im.group(1).strip()
+            if rid and iid and name:
+                items.append({"name": name, "restaurant_id": rid, "item_id": iid})
+        i += 1
 
-    # ── Item ID patterns ───────────────────────────────────────────────────
-    iid_patterns = [
-        # JSON-style "itemId": "abc"
-        re.compile(r'"itemId"\s*[=:]\s*"?([A-Za-z0-9_@.-]+)"?'),
-        # Human label: Item ID: abc
-        re.compile(r'[Ii]tem\s+(?:ID|Id|id)\s*[=:]\s*"?([A-Za-z0-9_@.-]+)"?'),
-        # "id": "abc" — only as a last resort (broad, may match wrong things)
-        re.compile(r'"id"\s*[=:]\s*"([A-Za-z0-9_@.-]+)"'),
-        # dishId / menuItemId
-        re.compile(r'"?(?:dishId|menuItemId)"?\s*[=:]\s*"?([A-Za-z0-9_@.-]+)"?'),
-    ]
-    for pat in iid_patterns:
-        m = pat.search(text)
-        if m:
-            item_id = m.group(1).strip().strip('"')
-            break
+    if items:
+        _LOGGER.debug("_parse_search_menu_items (Format A): found %d items", len(items))
+        return items
 
-    if restaurant_id or item_id:
-        _LOGGER.debug(
-            "_parse_search_menu_text: found restaurant=%r item=%r",
-            restaurant_id, item_id,
-        )
-    else:
+    # ── Format B: pipe-separated ──────────────────────────────────────────────
+    for line in lines:
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) >= 3:
+            name = parts[0]
+            rid = iid = None
+            for part in parts[1:]:
+                rm = re.search(r"[Rr]estaurant\s+(?:ID|Id|id)\s*[=:]\s*([A-Za-z0-9_@.-]+)", part)
+                if rm:
+                    rid = rm.group(1).strip()
+                im = re.search(r"[Ii]tem\s+(?:ID|Id|id)\s*[=:]\s*([A-Za-z0-9_@.-]+)", part)
+                if im:
+                    iid = im.group(1).strip()
+            if rid and iid and name:
+                items.append({"name": name, "restaurant_id": rid, "item_id": iid})
+
+    if items:
+        _LOGGER.debug("_parse_search_menu_items (Format B): found %d items", len(items))
+        return items
+
+    # ── Format C: JSON-like fragments in multi-line text ─────────────────────
+    # Scan entire text for all restaurantId/itemId/name occurrences and zip them.
+    rids = re.findall(r'"?restaurantId"?\s*[=:]\s*"([A-Za-z0-9_@.-]+)"', text)
+    iids = re.findall(r'"itemId"\s*[=:]\s*"([A-Za-z0-9_@.-]+)"', text)
+    names_c = re.findall(r'"name"\s*:\s*"([^"]+)"', text)
+    for idx in range(min(len(rids), len(iids))):
+        name = names_c[idx] if idx < len(names_c) else f"Item {idx + 1}"
+        items.append({"name": name, "restaurant_id": rids[idx], "item_id": iids[idx]})
+
+    if items:
+        _LOGGER.debug("_parse_search_menu_items (Format C): found %d items", len(items))
+        return items
+
+    # ── Format D: restaurant header + indented item lines ─────────────────────
+    current_rid: str | None = None
+    for line in lines:
+        stripped = line.strip()
+        # Restaurant header: "Punjab Grill (ID: 12345)"
+        rh = re.match(r"^(.+?)\s+\(ID:\s*([A-Za-z0-9_@.-]+)\)\s*$", stripped)
+        if rh:
+            current_rid = rh.group(2).strip()
+            continue
+        if current_rid:
+            # Item line: "- Butter Chicken (Item ID: 67890, ₹349)"
+            il = re.match(r"^[-*]\s+(.+?)\s+\([Ii]tem\s+ID:\s*([A-Za-z0-9_@.-]+)", stripped)
+            if il:
+                items.append({
+                    "name": il.group(1).strip(),
+                    "restaurant_id": current_rid,
+                    "item_id": il.group(2).strip(),
+                })
+
+    if items:
+        _LOGGER.debug("_parse_search_menu_items (Format D): found %d items", len(items))
+        return items
+
+    _LOGGER.warning(
+        "_parse_search_menu_items: could not extract any items from text "
+        "(first 600 chars): %r", text[:600]
+    )
+    return []
+
+
+def _fuzzy_pick_item(query: str, items: list[dict], threshold: int = 45) -> dict | None:
+    """Return the best fuzzy match from a parsed item list using thefuzz.
+
+    Uses token_set_ratio which handles:
+    - Extra words: "butter chicken" matches "Butter Chicken Boneless (Half)"
+    - Word order: "chicken butter" matches "Butter Chicken"
+    - Case differences
+
+    Returns None if best score < threshold.
+    """
+    try:
+        from thefuzz import fuzz  # type: ignore[import]
+    except ImportError:
         _LOGGER.warning(
-            "_parse_search_menu_text: could not extract IDs from text (first 600 chars): %r",
-            text[:600],
+            "_fuzzy_pick_item: thefuzz not installed; falling back to difflib"
         )
-    return restaurant_id, item_id
+        import difflib
+        names = [it["name"].lower() for it in items]
+        matches = difflib.get_close_matches(query.lower(), names, n=1, cutoff=threshold / 100)
+        if matches:
+            idx = names.index(matches[0])
+            _LOGGER.debug("_fuzzy_pick_item (difflib): matched %r → %r", query, items[idx]["name"])
+            return items[idx]
+        return None
+
+    best_score = 0
+    best_item: dict | None = None
+    q = query.lower()
+    for item in items:
+        score = fuzz.token_set_ratio(q, item["name"].lower())
+        if score > best_score:
+            best_score = score
+            best_item = item
+
+    if best_item and best_score >= threshold:
+        _LOGGER.debug(
+            "_fuzzy_pick_item: matched %r → %r (score=%d)",
+            query, best_item["name"], best_score,
+        )
+        return best_item
+
+    _LOGGER.debug(
+        "_fuzzy_pick_item: no match above threshold %d for %r (best=%d on %r)",
+        threshold, query, best_score, best_item["name"] if best_item else "—",
+    )
+    return None
+
+
+# Keep for backward compat — wraps _parse_search_menu_items and returns single (rid, iid)
+def _parse_search_menu_text(text: str) -> tuple[str | None, str | None]:
+    """Extract restaurantId and itemId from plain-text. Returns first found pair."""
+    items = _parse_search_menu_items(text)
+    if items:
+        return items[0]["restaurant_id"], items[0]["item_id"]
+    return None, None
 
 
 def _parse_orders_text(text: str) -> dict:
@@ -635,20 +750,31 @@ class SwiggyApiClient:
 
             else:
                 # JSON parse failed — content[0].text is plain human-readable text.
-                # Use the dedicated plain-text parser which handles multiple known formats.
+                # Tier 2a: parse text into a list of {name, restaurant_id, item_id}
+                # Tier 2b: fuzzy-match user's query against parsed names (thefuzz)
                 _LOGGER.warning(
-                    "search_menu returned non-JSON for '%s'; attempting plain-text parse. "
+                    "search_menu returned non-JSON for '%s'; attempting fuzzy text parse. "
                     "Raw (first 800 chars): %r",
                     item_name, search_text[:800],
                 )
-                rid, iid = _parse_search_menu_text(search_text)
-                if rid and iid:
-                    restaurant_id = rid
-                    cart_items = [{"itemId": iid, "quantity": quantity, "variants": []}]
+                parsed_items = _parse_search_menu_items(search_text)
+                if parsed_items:
+                    best = _fuzzy_pick_item(item_name, parsed_items)
+                    if best:
+                        restaurant_id = best["restaurant_id"]
+                        cart_items = [{"itemId": best["item_id"], "quantity": quantity, "variants": []}]
+                    else:
+                        _LOGGER.warning(
+                            "Fuzzy match found no item above threshold for '%s' "
+                            "among %d parsed candidates: %s",
+                            item_name, len(parsed_items),
+                            [it["name"] for it in parsed_items[:5]],
+                        )
                 else:
-                    # Third-tier fallback: ai_task LLM extraction
+                    # Tier 3: ai_task LLM extraction (last resort)
                     _LOGGER.warning(
-                        "Regex parse failed for '%s'; trying ai_task LLM fallback.", item_name
+                        "Text parse found no items for '%s'; trying ai_task LLM fallback.",
+                        item_name,
                     )
                     rid, iid = await _resolve_with_ai_task(self._hass, search_text, item_name)
                     if rid and iid:
@@ -658,7 +784,7 @@ class SwiggyApiClient:
         if not restaurant_id or not cart_items:
             _LOGGER.warning(
                 "Could not resolve restaurant/item for '%s' from search_menu "
-                "(tried JSON parse, regex, and ai_task fallback); "
+                "(tried JSON parse, fuzzy text parse, and ai_task fallback); "
                 "search_text was: %r",
                 item_name, (search_text or "")[:500],
             )
