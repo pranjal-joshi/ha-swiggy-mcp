@@ -302,28 +302,73 @@ class SwiggyApiClient:
             data = _unwrap_data(parsed) if isinstance(parsed, dict) else parsed
             if isinstance(data, dict):
                 # Food cart: cartItems[]; Instamart cart: items[] or cartItems[]
-                raw_items = data.get("cartItems") or data.get("items") or []
+                # Instamart multi-store: stores[i].items[]
+                raw_items: list = (
+                    data.get("cartItems") or data.get("items") or []
+                )
+                # Also check multi-store shape: data.stores[i].items[]
+                if not raw_items:
+                    for store in (data.get("stores") or []):
+                        if isinstance(store, dict):
+                            raw_items.extend(store.get("items") or store.get("cartItems") or [])
+
                 names = [
                     i.get("name") or i.get("itemName") or i.get("productName", "")
                     for i in raw_items if isinstance(i, dict)
                 ]
-                # Total: try many field names. Instamart uses billBreakup.totalToPay
-                # or charges.total; Food uses grandTotal or totalAmount.
-                total = None
-                for key in ("totalToPay", "total", "grandTotal", "billTotal", "totalAmount", "itemTotal"):
-                    v = data.get(key)
-                    if v is not None:
-                        total = v
-                        break
-                # Instamart billBreakup sub-object
+
+                # ── Total resolution — many possible field names / nesting ──
+                # Priority: explicit total fields → billBreakup sub-object →
+                # charges sub-object → stores[i].billBreakup → any numeric "total" key
+                def _find_total(d: dict) -> float | None:
+                    for key in (
+                        "totalToPay", "grandTotal", "total", "billTotal",
+                        "totalAmount", "itemTotal", "cartTotal", "orderTotal",
+                    ):
+                        v = d.get(key)
+                        if v is not None:
+                            try:
+                                return float(v)
+                            except (TypeError, ValueError):
+                                pass
+                    return None
+
+                total: float | None = _find_total(data)
+
                 if total is None:
-                    bill = data.get("billBreakup") or data.get("charges") or {}
-                    if isinstance(bill, dict):
-                        for key in ("totalToPay", "total", "grandTotal", "totalAmount", "billTotal"):
-                            v = bill.get(key)
-                            if v is not None:
-                                total = v
+                    # Check known sub-objects
+                    for sub_key in ("billBreakup", "charges", "bill", "pricing"):
+                        sub = data.get(sub_key)
+                        if isinstance(sub, dict):
+                            total = _find_total(sub)
+                            if total is not None:
                                 break
+
+                if total is None:
+                    # Multi-store: stores[0].billBreakup
+                    for store in (data.get("stores") or []):
+                        if isinstance(store, dict):
+                            total = _find_total(store)
+                            if total is None:
+                                for sub_key in ("billBreakup", "charges", "bill"):
+                                    sub = store.get(sub_key)
+                                    if isinstance(sub, dict):
+                                        total = _find_total(sub)
+                                        break
+                            if total is not None:
+                                break
+
+                if total is None:
+                    # Last resort: scan all top-level numeric keys containing "total"
+                    for k, v in data.items():
+                        if "total" in k.lower() and v is not None:
+                            try:
+                                total = float(v)
+                                _LOGGER.debug("get_cart(%s) total from fallback key %r = %s", service, k, total)
+                                break
+                            except (TypeError, ValueError):
+                                pass
+
                 # For Instamart, preserve spinId+quantity for cart merge
                 im_raw = []
                 if service == "instamart":
@@ -333,7 +378,7 @@ class SwiggyApiClient:
                                 "spinId": i["spinId"],
                                 "quantity": i.get("quantity", 1),
                             })
-                _LOGGER.debug("get_cart(%s) parsed total=%s from keys=%s", service, total, list(data.keys()))
+                _LOGGER.debug("get_cart(%s) parsed total=%s items=%d keys=%s", service, total, len(names), list(data.keys())[:10])
                 return {"items": [n for n in names if n], "total": total, "raw_items": im_raw}
         _LOGGER.debug("get_cart(%s) plain-text: %r", service, text[:500])
         result = _parse_cart_text(text)
@@ -641,11 +686,19 @@ class SwiggyApiClient:
         _LOGGER.info("flush_cart(%s) plain-text response: %s", service, text[:200])
         return {"success": True, "message": text}
 
-    async def get_instamart_orders(self, address_id: str, count: int = 1) -> dict:
-        """Fetch recent Instamart orders."""
+    async def get_instamart_orders(self, active_only: bool = False, count: int = 1) -> dict:
+        """Fetch Instamart orders.
+
+        Per Swiggy docs: get_orders accepts count, orderType, activeOnly.
+        Use active_only=True when polling for order status (coordinator).
+        Use active_only=False for order history (reorder_last).
+        """
+        args: dict = {"count": count}
+        if active_only:
+            args["activeOnly"] = True
         raw = await self._post(
             "instamart",
-            _mcp_payload("get_orders", {"count": count}),
+            _mcp_payload("get_orders", args),
         )
         text = _extract_content_text(raw)
         if text is None:

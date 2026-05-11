@@ -23,16 +23,19 @@ async def async_setup_entry(
 ) -> None:
     """Set up Swiggy MCP binary sensors."""
     coordinator: SwiggyDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([SwiggyOrderActiveSensor(coordinator, entry)])
+    async_add_entities([
+        SwiggyOrderActiveSensor(coordinator, entry),
+        SwiggyInstamartOrderActiveSensor(coordinator, entry),
+    ])
 
 
 class SwiggyOrderActiveSensor(
     CoordinatorEntity[SwiggyDataUpdateCoordinator], BinarySensorEntity
 ):
-    """Binary sensor: True when an active Swiggy order is in progress."""
+    """Binary sensor: True when an active Food order is in progress."""
 
     _attr_has_entity_name = True
-    _attr_name = "Order Active"
+    _attr_name = "Food Order Active"
     _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_icon = "mdi:scooter"
 
@@ -44,3 +47,23 @@ class SwiggyOrderActiveSensor(
     @property
     def is_on(self) -> bool:
         return bool(self.coordinator.data.get("order_active"))
+
+
+class SwiggyInstamartOrderActiveSensor(
+    CoordinatorEntity[SwiggyDataUpdateCoordinator], BinarySensorEntity
+):
+    """Binary sensor: True when an active Instamart order is in progress."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Instamart Order Active"
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_icon = "mdi:basket-check"
+
+    def __init__(self, coordinator: SwiggyDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_instamart_order_active"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.coordinator.data.get("instamart_order_active"))

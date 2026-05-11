@@ -41,6 +41,8 @@ ORDER_STATUS_DELIVERED = "Delivered"
 # ── HA event names ────────────────────────────────────────────────────────────
 EVENT_OUT_FOR_DELIVERY = f"{DOMAIN}_out_for_delivery"
 EVENT_ORDER_DELIVERED = f"{DOMAIN}_order_delivered"
+EVENT_INSTAMART_OUT_FOR_DELIVERY = f"{DOMAIN}_instamart_out_for_delivery"
+EVENT_INSTAMART_ORDER_DELIVERED = f"{DOMAIN}_instamart_order_delivered"
 
 # ── HA service names ──────────────────────────────────────────────────────────
 SERVICE_REORDER_LAST = "reorder_last"

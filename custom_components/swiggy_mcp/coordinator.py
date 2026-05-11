@@ -22,6 +22,8 @@ from .const import (
     DOMAIN,
     EVENT_ORDER_DELIVERED,
     EVENT_OUT_FOR_DELIVERY,
+    EVENT_INSTAMART_OUT_FOR_DELIVERY,
+    EVENT_INSTAMART_ORDER_DELIVERED,
     ORDER_STATUS_DELIVERED,
     ORDER_STATUS_OUT_FOR_DELIVERY,
 )
@@ -43,6 +45,7 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
         self._address_text: str | None = None  # full address string for sensor
         self._addresses: list[dict] = []  # full list for address select entity
         self._prev_status: str | None = None
+        self._prev_im_status: str | None = None
 
         interval = timedelta(
             seconds=entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
@@ -84,6 +87,7 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
         and retries on the next poll interval. Only auth failures re-raise.
         """
         empty: dict = {
+            # Food order
             "order_active": False,
             "order_id": None,
             "order_status": None,
@@ -94,6 +98,14 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
             # Food cart
             "cart_items": None,
             "cart_total": None,
+            # Instamart order
+            "instamart_order_active": False,
+            "instamart_order_id": None,
+            "instamart_order_status": None,
+            "instamart_store": None,
+            "instamart_billed_amount": None,
+            "instamart_eta": None,
+            "instamart_order_items": None,
             # Instamart cart
             "instamart_cart_items": None,
             "instamart_cart_total": None,
@@ -152,16 +164,17 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
                     "order_active": status not in (ORDER_STATUS_DELIVERED, None),
                     "order_id": active.get("orderId") or active.get("order_id"),
                     "order_status": status,
-                    "restaurant": active.get("restaurantName"),
-                    "billed_amount": active.get("billedAmount") or active.get("orderTotal"),
-                    "eta": active.get("sla") or active.get("eta"),
+                    "restaurant": active.get("restaurantName") or active.get("restaurant"),
+                    "billed_amount": active.get("billedAmount") or active.get("orderTotal") or active.get("totalAmount"),
+                    "eta": active.get("sla") or active.get("eta") or active.get("deliveryEta"),
                     "items": ", ".join(
-                        i.get("name", "") for i in active.get("items", [])
-                    ),
+                        (i.get("name") or i if isinstance(i, str) else "")
+                        for i in active.get("items", [])
+                    ) or None,
                 }
             )
 
-            # Fire HA events on status transitions
+            # Fire HA events on food order status transitions
             if status != self._prev_status:
                 if status == ORDER_STATUS_OUT_FOR_DELIVERY:
                     self.hass.bus.async_fire(
@@ -175,6 +188,49 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Populate delivery address sensor
         result["address"] = self._address_text
+
+        # ── Instamart active order (non-fatal) ───────────────────────────────
+        try:
+            im_orders_data = await self.client.get_instamart_orders(active_only=True, count=1)
+            im_orders = (im_orders_data or {}).get("orders") or []
+            im_active = im_orders[0] if im_orders else None
+            if im_active:
+                im_status = (
+                    im_active.get("status") or im_active.get("orderStatus")
+                    or im_active.get("orderState")
+                )
+                im_items_raw = im_active.get("items") or im_active.get("orderItems") or []
+                im_items_str = ", ".join(
+                    (i.get("name") or i.get("productName") or i if isinstance(i, str) else "")
+                    for i in im_items_raw
+                ) or None
+                result.update({
+                    "instamart_order_active": im_status not in (ORDER_STATUS_DELIVERED, "Delivered", None),
+                    "instamart_order_id": im_active.get("orderId") or im_active.get("order_id"),
+                    "instamart_order_status": im_status,
+                    "instamart_store": im_active.get("storeName") or im_active.get("restaurantName"),
+                    "instamart_billed_amount": (
+                        im_active.get("billedAmount") or im_active.get("orderTotal")
+                        or im_active.get("totalAmount")
+                    ),
+                    "instamart_eta": im_active.get("sla") or im_active.get("eta") or im_active.get("deliveryEta"),
+                    "instamart_order_items": im_items_str,
+                })
+                # Fire HA events on Instamart order status transitions
+                if im_status != self._prev_im_status:
+                    if im_status == ORDER_STATUS_OUT_FOR_DELIVERY:
+                        self.hass.bus.async_fire(
+                            EVENT_INSTAMART_OUT_FOR_DELIVERY,
+                            {"order_id": result["instamart_order_id"]},
+                        )
+                    elif im_status in (ORDER_STATUS_DELIVERED, "Delivered"):
+                        self.hass.bus.async_fire(
+                            EVENT_INSTAMART_ORDER_DELIVERED,
+                            {"order_id": result["instamart_order_id"]},
+                        )
+                    self._prev_im_status = im_status
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Instamart order fetch failed (non-fatal): %s", err)
 
         # Fetch food cart (non-fatal)
         try:

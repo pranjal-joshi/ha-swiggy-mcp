@@ -55,7 +55,7 @@ class SwiggyAddressSelect(CoordinatorEntity[SwiggyDataUpdateCoordinator], Select
     ) -> None:
         super().__init__(coordinator)
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_delivery_address"
-        self._attr_name = "Swiggy Delivery Address"
+        self._attr_name = "Delivery Address"
         self._attr_device_info = _device_info(entry)
         # Internal map: label → address_id (rebuilt on each coordinator update)
         self._label_to_id: dict[str, str] = {}

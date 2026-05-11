@@ -36,74 +36,117 @@ class SwiggyMcpSensorDescription(SensorEntityDescription):
 
 
 SENSORS: tuple[SwiggyMcpSensorDescription, ...] = (
+    # ── Food order ────────────────────────────────────────────────────────────
     SwiggyMcpSensorDescription(
         key="order_status",
         coordinator_key="order_status",
-        name="Swiggy Order Status",
+        name="Food Order Status",
         icon="mdi:truck-delivery",
     ),
     SwiggyMcpSensorDescription(
         key="eta",
         coordinator_key="eta",
-        name="Swiggy ETA",
+        name="Food ETA",
         icon="mdi:clock-fast",
         native_unit_of_measurement="min",
     ),
     SwiggyMcpSensorDescription(
         key="restaurant",
         coordinator_key="restaurant",
-        name="Swiggy Restaurant",
+        name="Food Restaurant",
         icon="mdi:silverware-fork-knife",
     ),
     SwiggyMcpSensorDescription(
         key="billed_amount",
         coordinator_key="billed_amount",
-        name="Swiggy Billed Amount",
+        name="Food Billed Amount",
         icon="mdi:currency-inr",
         native_unit_of_measurement="₹",
     ),
     SwiggyMcpSensorDescription(
         key="last_order_items",
         coordinator_key="items",
-        name="Swiggy Last Order Items",
+        name="Food Order Items",
         icon="mdi:food-variant",
     ),
     SwiggyMcpSensorDescription(
         key="order_id",
         coordinator_key="order_id",
-        name="Swiggy Order ID",
+        name="Food Order ID",
         icon="mdi:identifier",
     ),
+    # ── Food cart ─────────────────────────────────────────────────────────────
     SwiggyMcpSensorDescription(
         key="cart_items",
         coordinator_key="cart_items",
-        name="Swiggy Food Cart Items",
+        name="Food Cart Items",
         icon="mdi:cart-outline",
     ),
     SwiggyMcpSensorDescription(
         key="cart_total",
         coordinator_key="cart_total",
-        name="Swiggy Food Cart Total",
+        name="Food Cart Total",
+        icon="mdi:currency-inr",
+        native_unit_of_measurement="₹",
+    ),
+    # ── Instamart order ───────────────────────────────────────────────────────
+    SwiggyMcpSensorDescription(
+        key="instamart_order_status",
+        coordinator_key="instamart_order_status",
+        name="Instamart Order Status",
+        icon="mdi:truck-delivery-outline",
+    ),
+    SwiggyMcpSensorDescription(
+        key="instamart_eta",
+        coordinator_key="instamart_eta",
+        name="Instamart ETA",
+        icon="mdi:clock-fast",
+        native_unit_of_measurement="min",
+    ),
+    SwiggyMcpSensorDescription(
+        key="instamart_store",
+        coordinator_key="instamart_store",
+        name="Instamart Store",
+        icon="mdi:store-outline",
+    ),
+    SwiggyMcpSensorDescription(
+        key="instamart_billed_amount",
+        coordinator_key="instamart_billed_amount",
+        name="Instamart Billed Amount",
         icon="mdi:currency-inr",
         native_unit_of_measurement="₹",
     ),
     SwiggyMcpSensorDescription(
+        key="instamart_order_items",
+        coordinator_key="instamart_order_items",
+        name="Instamart Order Items",
+        icon="mdi:basket",
+    ),
+    SwiggyMcpSensorDescription(
+        key="instamart_order_id",
+        coordinator_key="instamart_order_id",
+        name="Instamart Order ID",
+        icon="mdi:identifier",
+    ),
+    # ── Instamart cart ────────────────────────────────────────────────────────
+    SwiggyMcpSensorDescription(
         key="instamart_cart_items",
         coordinator_key="instamart_cart_items",
-        name="Swiggy Instamart Cart Items",
+        name="Instamart Cart Items",
         icon="mdi:basket-outline",
     ),
     SwiggyMcpSensorDescription(
         key="instamart_cart_total",
         coordinator_key="instamart_cart_total",
-        name="Swiggy Instamart Cart Total",
+        name="Instamart Cart Total",
         icon="mdi:currency-inr",
         native_unit_of_measurement="₹",
     ),
+    # ── Delivery address ──────────────────────────────────────────────────────
     SwiggyMcpSensorDescription(
         key="address",
         coordinator_key="address",
-        name="Swiggy Delivery Address",
+        name="Delivery Address",
         icon="mdi:map-marker",
     ),
 )

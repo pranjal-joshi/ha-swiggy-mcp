@@ -41,13 +41,13 @@ class SwiggyButtonDescription(ButtonEntityDescription):
 BUTTONS: tuple[SwiggyButtonDescription, ...] = (
     SwiggyButtonDescription(
         key="clear_food_cart",
-        name="Swiggy Clear Food Cart",
+        name="Food Clear Cart",
         service="food",
         icon="mdi:cart-remove",
     ),
     SwiggyButtonDescription(
         key="clear_instamart_cart",
-        name="Swiggy Clear Instamart Cart",
+        name="Instamart Clear Cart",
         service="instamart",
         icon="mdi:basket-remove",
     ),
