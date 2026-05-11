@@ -176,6 +176,7 @@ def _parse_search_menu_text(text: str) -> tuple[str | None, str | None]:
     return restaurant_id, item_id
 
 
+def _parse_orders_text(text: str) -> dict:
     """Best-effort parse of Swiggy's plain-text order response."""
     _LOGGER.debug("Plain-text order response: %r", text[:500])
     lower = text.lower()
