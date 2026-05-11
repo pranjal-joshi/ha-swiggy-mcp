@@ -315,6 +315,9 @@ class SwiggyApiClient:
         """Search for a dish by name, then add first result to food cart.
 
         Uses search_menu to resolve item + restaurant IDs, then update_food_cart.
+        Two response shapes are handled defensively:
+          - Flat:   data.items[i]  { id, restaurantId, ... }   ← current API
+          - Nested: data.restaurants[i].menuItems[j]           ← legacy fallback
         """
         # Step 1: search for the item
         search_raw = await self._post(
@@ -325,32 +328,77 @@ class SwiggyApiClient:
         restaurant_id = None
         cart_items = []
 
+        _LOGGER.debug("search_menu raw response for '%s': %r", item_name, (search_text or "")[:800])
+
         if search_text:
             parsed = _try_parse_json(search_text)
             if parsed is not None:
                 data = _unwrap_data(parsed) if isinstance(parsed, dict) else parsed
-                results = []
-                if isinstance(data, dict):
-                    results = data.get("restaurants") or data.get("items") or []
-                elif isinstance(data, list):
-                    results = data
 
-                for r in results[:1]:  # take first restaurant match
-                    restaurant_id = r.get("restaurantId") or r.get("id")
-                    menu_items = r.get("menuItems") or r.get("items") or []
-                    for mi in menu_items[:1]:  # take first item match
-                        cart_items = [{
-                            "itemId": mi.get("itemId") or mi.get("id"),
-                            "quantity": quantity,
-                            "variants": mi.get("variants", []),
-                        }]
-                        break
-                    if restaurant_id and cart_items:
-                        break
+                # Guard: _unwrap_data may return None when data key is null
+                if not data:
+                    _LOGGER.warning(
+                        "search_menu returned success but empty data for '%s'", item_name
+                    )
+                else:
+                    # ── Shape A: flat items list (current API per docs) ──────────
+                    # data = { items: [ { id, restaurantId, name, variants, ... } ] }
+                    flat_items = []
+                    if isinstance(data, dict):
+                        flat_items = data.get("items") or data.get("menuItems") or []
+                    elif isinstance(data, list):
+                        flat_items = data
+
+                    for item in flat_items[:1]:
+                        rid = item.get("restaurantId") or item.get("restaurant_id")
+                        iid = item.get("id") or item.get("itemId")
+                        if rid and iid:
+                            restaurant_id = rid
+                            cart_items = [{
+                                "itemId": iid,
+                                "quantity": quantity,
+                                "variants": item.get("variants", []),
+                            }]
+                            _LOGGER.debug(
+                                "search_menu shape-A match: restaurant=%s item=%s", rid, iid
+                            )
+                            break
+
+                    # ── Shape B: nested restaurants[].menuItems[] (legacy fallback) ─
+                    if not restaurant_id or not cart_items:
+                        nested = []
+                        if isinstance(data, dict):
+                            nested = data.get("restaurants") or []
+                        for r in nested[:1]:
+                            rid = r.get("restaurantId") or r.get("id")
+                            menu_items = r.get("menuItems") or r.get("items") or []
+                            for mi in menu_items[:1]:
+                                iid = mi.get("itemId") or mi.get("id")
+                                if rid and iid:
+                                    restaurant_id = rid
+                                    cart_items = [{
+                                        "itemId": iid,
+                                        "quantity": quantity,
+                                        "variants": mi.get("variants", []),
+                                    }]
+                                    _LOGGER.debug(
+                                        "search_menu shape-B match: restaurant=%s item=%s", rid, iid
+                                    )
+                                    break
+                            if restaurant_id and cart_items:
+                                break
+            else:
+                # JSON parse failed — Swiggy returned plain text
+                _LOGGER.warning(
+                    "search_menu returned non-JSON for '%s'; raw text: %r",
+                    item_name, search_text[:500],
+                )
 
         if not restaurant_id or not cart_items:
             _LOGGER.warning(
-                "Could not resolve restaurant/item for '%s' from search_menu", item_name
+                "Could not resolve restaurant/item for '%s' from search_menu; "
+                "search_text was: %r",
+                item_name, (search_text or "")[:500],
             )
             raise UpdateFailed(
                 f"Could not find '{item_name}' on Swiggy Food — "
@@ -380,7 +428,8 @@ class SwiggyApiClient:
     ) -> dict:
         """Search Instamart for a product by name, then add to cart.
 
-        Uses search_products → get spinId → merge with current cart → update_cart.
+        Uses search_products → get spinId → update_cart.
+        Per docs: data.products[i].variants[j].spinId
         """
         # Step 1: search for the product
         search_raw = await self._post(
@@ -393,24 +442,57 @@ class SwiggyApiClient:
         search_text = _extract_content_text(search_raw)
         spin_id = None
 
+        _LOGGER.debug("search_products raw response for '%s': %r", item_name, (search_text or "")[:800])
+
         if search_text:
             parsed = _try_parse_json(search_text)
             if parsed is not None:
                 data = _unwrap_data(parsed) if isinstance(parsed, dict) else parsed
-                products = []
-                if isinstance(data, dict):
-                    products = data.get("products") or data.get("items") or []
-                elif isinstance(data, list):
-                    products = data
-                for p in products[:1]:
-                    # Products have variants; take the first variant's spinId
-                    variants = p.get("variants") or [p]
-                    spin_id = variants[0].get("spinId") if variants else p.get("spinId")
-                    if spin_id:
-                        break
+
+                # Guard: _unwrap_data may return None when data key is null
+                if not data:
+                    _LOGGER.warning(
+                        "search_products returned success but empty data for '%s'", item_name
+                    )
+                else:
+                    products = []
+                    if isinstance(data, dict):
+                        products = (
+                            data.get("products")
+                            or data.get("items")
+                            or data.get("listings")
+                            or data.get("results")
+                            or []
+                        )
+                    elif isinstance(data, list):
+                        products = data
+
+                    for p in products[:1]:
+                        # Per docs: each product has variants[], each variant has spinId
+                        variants = p.get("variants") or []
+                        if variants:
+                            spin_id = variants[0].get("spinId")
+                        # Fallback: spinId directly on the product
+                        if not spin_id:
+                            spin_id = p.get("spinId")
+                        if spin_id:
+                            _LOGGER.debug(
+                                "search_products match: product=%s spinId=%s",
+                                p.get("name", "?"), spin_id,
+                            )
+                            break
+            else:
+                # JSON parse failed — Swiggy returned plain text
+                _LOGGER.warning(
+                    "search_products returned non-JSON for '%s'; raw text: %r",
+                    item_name, search_text[:500],
+                )
 
         if not spin_id:
-            _LOGGER.warning("Could not resolve spinId for '%s'", item_name)
+            _LOGGER.warning(
+                "Could not resolve spinId for '%s'; search_text was: %r",
+                item_name, (search_text or "")[:500],
+            )
             raise UpdateFailed(
                 f"Could not find '{item_name}' on Swiggy Instamart — "
                 "check the product name and try again"
