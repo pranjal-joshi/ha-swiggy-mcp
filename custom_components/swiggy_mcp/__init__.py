@@ -1,10 +1,12 @@
-"""Swiggy MCP — Home Assistant Integration entry point.
+"""Swiggy MCP — Home Assistant Integration entry point (Instamart focused).
 
 Wiring order:
   TokenStore → SwiggyAuthManager → SwiggyApiClient → coordinator → entities
 
 Migration: if a config entry still has the old 'bearer_token' key (v0.x),
 we trigger reauth immediately so the user goes through the new OAuth flow.
+
+Food ordering features are available in the 'food' branch.
 """
 from __future__ import annotations
 

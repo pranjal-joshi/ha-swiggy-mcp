@@ -1,4 +1,4 @@
-"""Constants for the Swiggy MCP integration."""
+"""Constants for the Swiggy MCP integration — Instamart focused."""
 
 DOMAIN = "swiggy_mcp"
 
@@ -38,17 +38,14 @@ ORDER_STATUS_PREPARING = "Preparing"
 ORDER_STATUS_OUT_FOR_DELIVERY = "Out for Delivery"
 ORDER_STATUS_DELIVERED = "Delivered"
 
-# ── HA event names ────────────────────────────────────────────────────────────
-EVENT_OUT_FOR_DELIVERY = f"{DOMAIN}_out_for_delivery"
-EVENT_ORDER_DELIVERED = f"{DOMAIN}_order_delivered"
+# ── HA event names (Instamart) ────────────────────────────────────────────────
 EVENT_INSTAMART_OUT_FOR_DELIVERY = f"{DOMAIN}_instamart_out_for_delivery"
 EVENT_INSTAMART_ORDER_DELIVERED = f"{DOMAIN}_instamart_order_delivered"
 
 # ── HA service names ──────────────────────────────────────────────────────────
-SERVICE_REORDER_LAST = "reorder_last"
 SERVICE_ADD_TO_CART = "add_to_cart"
 SERVICE_CLEAR_CART = "clear_cart"
-SERVICE_PLACE_ORDER = "place_order"
+SERVICE_PLACE_ORDER = "place_instamart_order"
 
 # ── Add-on mode ───────────────────────────────────────────────────────────────
 CONF_USE_ADDON = "use_addon"

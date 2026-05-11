@@ -1,151 +1,186 @@
-# Swiggy MCP for Home Assistant — Architecture
+# Architecture — Swiggy MCP Home Assistant Integration
 
-## Overview
+## System Overview
 
-This repository contains two components:
+The integration is made up of two independently deployable parts:
 
-1. **`ha-swiggy-mcp-addon/`** — A Home Assistant add-on that runs a local HTTP proxy server. It performs OAuth 2.1 + PKCE authentication with Swiggy using a `localhost` redirect URI (whitelisted by Swiggy), stores tokens persistently in `/data/`, auto-refreshes them, and proxies all MCP calls to `mcp.swiggy.com` with the stored Bearer token.
+```mermaid
+graph TD
+    subgraph HA["Home Assistant"]
+        addon["🔐 Swiggy MCP Proxy Add-on\n─────────────────────\nOAuth 2.1 + PKCE\nlocalhost redirect URI ✓\nEncrypted token storage\nAuto token refresh\nport 9584"]
+        integration["📦 swiggy_mcp HACS Integration\n─────────────────────\nInstamart sensors · Services · Events\nPolls every N seconds"]
+        consumers["🤖 HA Automations / Voice / Assist"]
 
-2. **`custom_components/swiggy_mcp/`** — A HACS custom integration that exposes Swiggy order data as HA sensors and provides HA services. In **add-on mode** it talks to the local proxy; in **direct mode** it connects to Swiggy directly (requires Swiggy whitelist approval for the HA callback URL).
+        integration -- "http://homeassistant.local:9584" --> addon
+        consumers -- "call service / read sensor" --> integration
+    end
+
+    addon -- "Bearer token (proxied)" --> swiggy["☁️ mcp.swiggy.com\ninstamart"]
+```
+
+**Why the add-on?** Swiggy's OAuth server only whitelists specific redirect URIs. `http://localhost` is on that list — HA's external callback URL is not. The add-on performs OAuth using a `localhost` redirect URI (valid per [RFC 8252](https://www.rfc-editor.org/rfc/rfc8252)), stores the tokens, and proxies every MCP call with them. The HACS integration just talks to the add-on — no auth complexity.
 
 ---
 
-## Why the Add-on?
+## Integration File Structure
 
-Swiggy's OAuth server validates redirect URIs against a fixed whitelist:
-
-```
-http://localhost
-http://localhost/callback
-http://127.0.0.1
-http://127.0.0.1/callback
-https://claude.ai/api/mcp/auth_callback
-https://chatgpt.com/connector_platform_oauth_redirect
-...
-```
-
-Home Assistant's OAuth callback (`https://your-ha-instance/auth/external/callback`) is **not** on this list for new/unregistered clients, causing a "not whitelisted" error during setup.
-
-The add-on solves this by running directly on the HA host and using `http://localhost/callback` as the redirect URI — which is always whitelisted. The user pastes the redirect URL into the add-on's web UI (the "code-paste flow"), the add-on exchanges the code for tokens, and stores them locally. The integration then simply POSTs to the add-on's HTTP endpoints.
-
----
-
-## Add-on Architecture
-
+### Add-on (`ha-swiggy-mcp-addon/`)
 ```
 ha-swiggy-mcp-addon/
-├── config.yaml        # HA add-on metadata (port 9584, ingress, arch)
-├── build.yaml         # Multi-arch base images (amd64/aarch64/armv7)
-├── Dockerfile         # Alpine Python 3.12, installs aiohttp
-├── requirements.txt   # aiohttp, cryptography
-├── logo.png / icon.png
+├── config.yaml        HA add-on manifest (port 9584, multi-arch, ingress)
+├── build.yaml         Multi-arch base images (amd64 / aarch64 / armv7)
+├── Dockerfile         Python 3.12 Alpine, installs requirements
+├── requirements.txt   aiohttp, cryptography
 └── src/
-    ├── server.py      # aiohttp app, all HTTP routes
-    ├── oauth.py       # DCR, PKCE, auth URL builder, code extractor, token exchange
-    ├── proxy.py       # Token injection, auto-refresh, Swiggy endpoint routing
-    └── storage.py     # /data/tokens.json read/write/clear
+    ├── server.py      aiohttp web server — OAuth UI + proxy routes
+    ├── oauth.py       DCR + PKCE + code-paste URL extraction
+    ├── proxy.py       Forwards MCP calls with stored Bearer token
+    └── storage.py     Read/write /data/tokens.json (persistent volume)
 ```
 
-### Add-on Routes
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/` | Dashboard (auth status, login/logout button) |
-| GET | `/auth/start` | DCR + builds auth URL, shows code-paste form |
-| POST | `/auth/submit` | Extracts code from pasted URL, exchanges for tokens |
-| GET | `/auth/logout` | Clears stored tokens |
-| GET | `/health` | `{"status":"ok","authenticated":true/false}` |
-| POST | `/food` | Proxy → `https://mcp.swiggy.com/food` |
-| POST | `/instamart` | Proxy → `https://mcp.swiggy.com/im` |
-| POST | `/im` | Proxy → `https://mcp.swiggy.com/im` |
-| POST | `/dineout` | Proxy → `https://mcp.swiggy.com/dineout` |
-
-### OAuth Code-Paste Flow
-
-```
-User clicks "Login with Swiggy"
-  → Add-on: DCR → gets client_id (stored in /data/)
-  → Add-on: builds PKCE auth URL (redirect_uri=http://localhost/callback)
-  → User: opens URL, logs in at mcp.swiggy.com
-  → Swiggy: redirects browser to http://localhost/callback?code=XXX
-  → Browser: fails to load (localhost on remote HA)
-  → User: copies URL from address bar, pastes into add-on UI
-  → Add-on: extracts code, exchanges for access+refresh tokens (PKCE)
-  → Add-on: stores tokens in /data/tokens.json
-  → Done ✅
-```
-
----
-
-## Integration Architecture
-
+### HACS Integration (`custom_components/swiggy_mcp/`)
 ```
 custom_components/swiggy_mcp/
-├── __init__.py         # Entry setup, migration guard, service registration
-├── config_flow.py      # Mode selection → addon step OR OAuth → address step
-├── coordinator.py      # DataUpdateCoordinator, polls Swiggy, fires HA events
-├── sensor.py           # Sensor entities
-├── binary_sensor.py    # Binary sensor entities
-├── services.py         # reorder_last, add_to_cart, clear_cart
-├── services.yaml       # Service schemas
-├── const.py            # Constants (endpoints, config keys, defaults)
-├── manifest.json       # HA manifest
-├── translations/en.json
-├── DOCS.md
 ├── auth/
-│   ├── pkce.py         # PKCE code verifier/challenge (direct mode)
-│   ├── manager.py      # Token lifecycle manager (direct mode)
-│   └── store.py        # Encrypted token storage in config entry (direct mode)
-└── api/
-    └── client.py       # HTTP client — add-on mode or direct mode
+│   ├── pkce.py        PKCE S256 verifier + challenge (direct mode)
+│   ├── store.py       Encrypted token storage in HA config entry
+│   └── manager.py     Auto-refresh, ConfigEntryAuthFailed on rejection
+├── api/
+│   └── client.py      MCP HTTP calls — add-on or direct endpoint
+├── llm/
+│   ├── api.py         SwiggyLLMApi — registers intent with HA Assist
+│   └── tools.py       LLM tool definitions (Instamart MCP tools)
+├── __init__.py        Entry setup + platform/service wiring
+├── config_flow.py     Mode selection → add-on URL or OAuth 2.1 flow
+├── coordinator.py     Polls every N seconds, fires HA events
+├── sensor.py          Instamart order + cart sensors
+├── binary_sensor.py   Instamart order active binary sensor
+├── button.py          Instamart Clear Cart button
+├── select.py          Delivery Address dropdown
+├── services.py        add_to_cart, clear_cart
+├── const.py           All constants
+└── DOCS.md            User-facing integration docs
 ```
-
-### Config Entry Modes
-
-**Add-on mode** (`use_addon: true`):
-```json
-{
-  "use_addon": true,
-  "addon_url": "http://homeassistant.local:9584",
-  "poll_interval": 30
-}
-```
-No tokens in the config entry. Auth is fully handled by the add-on.
-
-**Direct mode** (`use_addon: false`):
-```json
-{
-  "use_addon": false,
-  "client_id": "...",
-  "access_token": "...",
-  "refresh_token": "...",
-  "token_expires_at": 1234567890.0,
-  "address_id": "addr_xxx",
-  "poll_interval": 30
-}
-```
-
-### API Client Routing
-
-`SwiggyApiClient._resolve_url(service)`:
-- Add-on mode: `{addon_url}/{service}` (e.g., `http://homeassistant.local:9584/food`)
-- Direct mode: maps to `https://mcp.swiggy.com/food`, `.../im`, `.../dineout`
-
-In add-on mode, no `Authorization` header is sent — the add-on injects it. In direct mode, the client fetches a token from `SwiggyAuthManager` and injects it.
 
 ---
 
-## CI/CD
+## Auth Flow (Add-on mode)
 
-| Workflow | Trigger | Action |
+```mermaid
+sequenceDiagram
+    participant User
+    participant AddOn as Swiggy MCP Proxy Add-on
+    participant Swiggy as mcp.swiggy.com/auth
+    participant HA as HA Integration
+
+    User->>AddOn: Click "Login with Swiggy"
+    AddOn->>Swiggy: DCR → get client_id
+    AddOn->>Swiggy: PKCE authorize redirect
+    Swiggy-->>User: Login page (browser)
+    User->>Swiggy: Login + approve
+    Swiggy-->>User: Redirect to localhost:9584/callback?code=...
+    Note over User: Page fails to load (expected)<br/>Copy URL from address bar
+    User->>AddOn: Paste full callback URL
+    AddOn->>Swiggy: Exchange code + verifier → tokens
+    AddOn-->>User: ✅ Authenticated
+    loop Every poll interval
+        HA->>AddOn: MCP tool call (no auth header needed)
+        AddOn->>Swiggy: Proxied call + Bearer token
+        Swiggy-->>AddOn: Response
+        AddOn-->>HA: Response
+    end
+```
+
+---
+
+## Data Flow — add_to_cart Service
+
+The `add_to_cart` service uses a multi-tier approach to handle Swiggy's inconsistent `search_products` response formats:
+
+```mermaid
+flowchart TD
+    A["swiggy_mcp.add_to_cart\nservice call"] --> B["search_products via\ndirect HTTP POST"]
+    B --> C{Response type?}
+    C -->|JSON| D["JSON parse\n→ extract spinId"]
+    C -->|Plain text| E["_parse_search_menu_items()\nMulti-format regex parser\n(Formats A–E)"]
+    E --> F{Items found?}
+    F -->|Yes| G["_fuzzy_pick_item()\nthefuzz token_set_ratio\nthreshold=45"]
+    F -->|No| H["ai_task.generate_data\nLLM extraction fallback"]
+    G --> I{Score ≥ 45?}
+    I -->|Yes| J["update_cart\ndirect HTTP POST\n(merge with existing cart)"]
+    I -->|No| H
+    H --> K{IDs found?}
+    K -->|Yes| J
+    K -->|No| L["Raise UpdateFailed\n— item not found"]
+    D --> J
+    J --> M["Cart updated ✅\nCoordinator refresh"]
+
+    style H fill:#FC8019,color:#fff
+    style L fill:#e74c3c,color:#fff
+    style M fill:#27ae60,color:#fff
+```
+
+### Tier details
+
+| Tier | Method | When used |
 |---|---|---|
-| `validate.yml` | PR / push | hassfest + HACS validation |
-| `release.yml` | Tag `v*.*.*` | GitHub Release + manifest version bump |
-| `addon-build.yml` | Tag `addon-v*.*.*` | Multi-arch Docker build → GHCR push |
+| 1 | JSON parse → direct field extraction | `search_products` returns structured JSON |
+| 2a | `_parse_search_menu_items()` regex (Formats A–E) | Response is plain text with recognisable structure |
+| 2b | `_fuzzy_pick_item()` via `thefuzz.token_set_ratio` | Multiple items parsed — pick best match for user's query |
+| 3 | `ai_task.generate_data` LLM | Text parser found zero items (novel format) |
 
-### Add-on Image Naming
+---
+
+## Cart Total Resolution
+
+Swiggy's cart API uses inconsistent field names and value types across versions. The `_find_total()` function in `client.py` uses a multi-step scan:
+
 ```
-ghcr.io/pranjal-joshi/ha-swiggy-mcp-addon-amd64:0.1.0
-ghcr.io/pranjal-joshi/ha-swiggy-mcp-addon-aarch64:0.1.0
-ghcr.io/pranjal-joshi/ha-swiggy-mcp-addon-armv7:0.1.0
+1. Direct top-level keys (numeric or currency-string):
+   totalToPay, grandTotal, total, billTotal, totalAmount,
+   itemTotal, cartTotal, orderTotal, cartTotalAmount
+
+2. Nested {value: "₹195"} shape on known keys:
+   toPay.value, totalToPay.value, grandTotal.value
+
+3. Sub-object scan (billBreakdown, billBreakup, charges, bill, pricing):
+   → same key scan within each sub-object
+   → toPay.value / total.value within sub-objects
+   → lineItems[] scan for "To Pay" / "Grand Total" labels
+
+4. Multi-store shape:
+   stores[i].billBreakdown / stores[i].billBreakup
+
+5. Last resort:
+   Any top-level key containing "total", "topay", "to_pay" with a parseable value
 ```
+
+Currency strings are normalised by `_strip_currency()`:
+- `"₹195"` → `195.0`
+- `"Rs. 1,200.50"` → `1200.5`
+- `195` → `195.0`
+
+---
+
+## Branch Strategy
+
+| Branch | Focus | Status |
+|---|---|---|
+| `main` | Swiggy Instamart (groceries) | Stable, active development |
+| `food` | Swiggy Food ordering | Work in progress — not yet stable |
+
+The add-on (`ha-swiggy-mcp-addon/`) is shared and unchanged across branches.
+
+---
+
+## Mode Comparison
+
+| Feature | Add-on mode | Direct mode |
+|---|---|---|
+| Works without Swiggy whitelist approval | ✅ | ❌ |
+| OAuth via simple code-paste flow | ✅ | — |
+| Full OAuth 2.1 + PKCE browser flow | — | ✅ |
+| All sensors & binary sensors | ✅ | ✅ |
+| All HA services | ✅ | ✅ |
+| Voice / Assist integration | ✅ | ✅ |
+| Auto token refresh | ✅ | ✅ |

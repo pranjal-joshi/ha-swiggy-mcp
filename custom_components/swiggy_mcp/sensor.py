@@ -1,4 +1,4 @@
-"""Sensor entities for Swiggy MCP."""
+"""Sensor entities for Swiggy MCP — Instamart focused."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -32,63 +32,10 @@ class SwiggyMcpSensorDescription(SensorEntityDescription):
 
     coordinator_key: str = ""
     unit: str | None = None
-    icon: str = "mdi:food"
+    icon: str = "mdi:basket"
 
 
 SENSORS: tuple[SwiggyMcpSensorDescription, ...] = (
-    # ── Food order ────────────────────────────────────────────────────────────
-    SwiggyMcpSensorDescription(
-        key="order_status",
-        coordinator_key="order_status",
-        name="Food Order Status",
-        icon="mdi:truck-delivery",
-    ),
-    SwiggyMcpSensorDescription(
-        key="eta",
-        coordinator_key="eta",
-        name="Food ETA",
-        icon="mdi:clock-fast",
-        native_unit_of_measurement="min",
-    ),
-    SwiggyMcpSensorDescription(
-        key="restaurant",
-        coordinator_key="restaurant",
-        name="Food Restaurant",
-        icon="mdi:silverware-fork-knife",
-    ),
-    SwiggyMcpSensorDescription(
-        key="billed_amount",
-        coordinator_key="billed_amount",
-        name="Food Billed Amount",
-        icon="mdi:currency-inr",
-        native_unit_of_measurement="₹",
-    ),
-    SwiggyMcpSensorDescription(
-        key="last_order_items",
-        coordinator_key="items",
-        name="Food Order Items",
-        icon="mdi:food-variant",
-    ),
-    SwiggyMcpSensorDescription(
-        key="order_id",
-        coordinator_key="order_id",
-        name="Food Order ID",
-        icon="mdi:identifier",
-    ),
-    # ── Food cart ─────────────────────────────────────────────────────────────
-    SwiggyMcpSensorDescription(
-        key="cart_items",
-        coordinator_key="cart_items",
-        name="Food Cart Items",
-        icon="mdi:cart-outline",
-    ),
-    SwiggyMcpSensorDescription(
-        key="cart_total",
-        coordinator_key="cart_total",
-        name="Food Cart Total",
-        icon="mdi:currency-inr",
-        native_unit_of_measurement="₹",
-    ),
     # ── Instamart order ───────────────────────────────────────────────────────
     SwiggyMcpSensorDescription(
         key="instamart_order_status",

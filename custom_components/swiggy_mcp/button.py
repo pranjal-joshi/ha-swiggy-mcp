@@ -1,4 +1,4 @@
-"""Button entities for Swiggy MCP — clear cart actions."""
+"""Button entities for Swiggy MCP — Instamart cart actions."""
 from __future__ import annotations
 
 import logging
@@ -10,8 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.helpers.update_coordinator import CoordinatorEntity, UpdateFailed
 
 from .const import DOMAIN
 from .coordinator import SwiggyDataUpdateCoordinator
@@ -34,17 +33,11 @@ def _device_info(entry: ConfigEntry) -> DeviceInfo:
 class SwiggyButtonDescription(ButtonEntityDescription):
     """Describe a Swiggy MCP button."""
 
-    service: str = "food"  # "food" or "instamart"
-    icon: str = "mdi:cart-remove"
+    service: str = "instamart"
+    icon: str = "mdi:basket-remove"
 
 
 BUTTONS: tuple[SwiggyButtonDescription, ...] = (
-    SwiggyButtonDescription(
-        key="clear_food_cart",
-        name="Food Clear Cart",
-        service="food",
-        icon="mdi:cart-remove",
-    ),
     SwiggyButtonDescription(
         key="clear_instamart_cart",
         name="Instamart Clear Cart",
@@ -85,7 +78,7 @@ class SwiggyMcpButton(CoordinatorEntity[SwiggyDataUpdateCoordinator], ButtonEnti
         self._attr_device_info = _device_info(entry)
 
     async def async_press(self) -> None:
-        """Handle button press — clear the appropriate cart."""
+        """Handle button press — clear the Instamart cart."""
         coordinator = self.coordinator
         address_id = coordinator._address_id
         service = self.entity_description.service
@@ -98,5 +91,4 @@ class SwiggyMcpButton(CoordinatorEntity[SwiggyDataUpdateCoordinator], ButtonEnti
             _LOGGER.info("Cart cleared (%s): %s", service, msg)
         except UpdateFailed as err:
             raise HomeAssistantError(f"Clear cart failed: {err}") from err
-        # Immediately refresh coordinator so cart sensors update
         await coordinator.async_request_refresh()

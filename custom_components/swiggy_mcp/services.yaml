@@ -1,13 +1,13 @@
 add_to_cart:
-  name: Add to Cart
+  name: Add to Instamart Cart
   description: >
-    Search for an item by name and add it to your Swiggy Food or Instamart cart.
-    For Food: searches menus and adds the first matching dish.
-    For Instamart: searches products and adds by spinId.
+    Search for a grocery item by name and add it to your Swiggy Instamart cart.
+    Searches products and adds the best fuzzy match by spinId.
+    The cart is automatically merged — existing items are preserved.
   fields:
     query:
       name: Query
-      description: Name of the item to search for and add (e.g. "Maggi Noodles 70g", "Chicken Biryani")
+      description: Name of the grocery item to search for (e.g. "Maggi Noodles 70g", "Amul Butter 500g")
       required: true
       example: "Maggi Noodles 70g"
       selector:
@@ -21,37 +21,18 @@ add_to_cart:
           min: 1
           max: 20
           mode: box
-    service:
-      name: Service
-      description: Which Swiggy service — food or instamart
-      default: instamart
-      selector:
-        select:
-          options:
-            - food
-            - instamart
 
 clear_cart:
-  name: Clear Cart
-  description: Remove all items from your Swiggy Food or Instamart cart.
-  fields:
-    service:
-      name: Service
-      description: Which cart to clear — food or instamart
-      default: food
-      selector:
-        select:
-          options:
-            - food
-            - instamart
+  name: Clear Instamart Cart
+  description: Remove all items from your Swiggy Instamart cart.
 
-place_order:
-  name: Place Food Order
+place_instamart_order:
+  name: Place Instamart Order
   description: >
-    Place your current Swiggy food delivery order (Cash on Delivery).
+    Place your current Swiggy Instamart cart as a grocery order (Cash on Delivery).
     ⚠️ IRREVERSIBLE — orders cannot be cancelled after placement.
     Cart value must be under ₹1000 (Swiggy MCP beta limit).
-    Always review your cart using the Swiggy Cart Items sensor before calling this.
+    Always review your cart using the Instamart Cart Items sensor before calling this.
   fields:
     confirmed:
       name: Confirmed
@@ -59,10 +40,3 @@ place_order:
       required: true
       selector:
         boolean:
-
-reorder_last:
-  name: Reorder Last Order
-  description: >
-    Fetch details of the last order for reference.
-    Note: Swiggy MCP does not support automatic reorder — use this to see
-    what was ordered, then use add_to_cart to rebuild the cart manually.
