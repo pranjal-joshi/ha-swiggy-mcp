@@ -149,7 +149,7 @@ Adds an item to Instamart or Food cart.
 service: swiggy_mcp.add_to_cart
 data:
   service: instamart   # food | instamart
-  item: "Maggi Noodles 70g"
+  query: "Maggi Noodles 70g"
   quantity: 3
 ```
 

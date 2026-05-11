@@ -386,7 +386,7 @@ class SwiggyApiClient:
         search_raw = await self._post(
             "instamart",
             _mcp_payload("search_products", {
-                "searchString": item_name,
+                "query": item_name,
                 "addressId": address_id,
             }),
         )
@@ -470,7 +470,7 @@ class SwiggyApiClient:
         """Fetch recent Instamart orders."""
         raw = await self._post(
             "instamart",
-            _mcp_payload("get_orders", {"addressId": address_id, "orderCount": count}),
+            _mcp_payload("get_orders", {"count": count}),
         )
         text = _extract_content_text(raw)
         if text is None:

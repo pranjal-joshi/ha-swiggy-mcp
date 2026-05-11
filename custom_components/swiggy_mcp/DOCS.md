@@ -78,7 +78,7 @@ service: swiggy_mcp.reorder_last
 service: swiggy_mcp.add_to_cart
 data:
   service: instamart  # food | instamart
-  item: "Maggi Noodles 70g"
+  query: "Maggi Noodles 70g"
   quantity: 2
 ```
 

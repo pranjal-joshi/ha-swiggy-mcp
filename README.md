@@ -224,7 +224,7 @@ action:
   - service: swiggy_mcp.add_to_cart
     data:
       service: instamart
-      item: "India Gate Basmati Rice 5kg"
+      query: "India Gate Basmati Rice 5kg"
       quantity: 1
   - service: notify.mobile_app
     data:
