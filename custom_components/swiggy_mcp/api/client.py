@@ -276,12 +276,18 @@ class SwiggyApiClient:
     # ── Cart — Food ───────────────────────────────────────────────────────────
 
     async def get_cart(self, service: str, address_id: str) -> dict:
-        """Fetch current cart. Food: get_food_cart / Instamart: get_cart."""
+        """Fetch current cart. Returns {items, total, raw_items}.
+
+        Food:      get_food_cart — requires addressId
+        Instamart: get_cart     — takes NO parameters (per Swiggy docs)
+
+        raw_items is included for Instamart merge use:
+          [{"spinId": ..., "quantity": ...}, ...]
+        """
         if service == "instamart":
-            # get_cart takes selectedAddressId
             raw = await self._post(
                 "instamart",
-                _mcp_payload("get_cart", {"selectedAddressId": address_id}),
+                _mcp_payload("get_cart", {}),
             )
         else:
             raw = await self._post(
@@ -290,7 +296,7 @@ class SwiggyApiClient:
             )
         text = _extract_content_text(raw)
         if text is None:
-            return {"items": [], "total": None}
+            return {"items": [], "total": None, "raw_items": []}
         parsed = _try_parse_json(text)
         if parsed is not None:
             data = _unwrap_data(parsed) if isinstance(parsed, dict) else parsed
@@ -305,9 +311,20 @@ class SwiggyApiClient:
                     data.get("total") or data.get("grandTotal")
                     or data.get("billTotal") or data.get("totalAmount")
                 )
-                return {"items": [n for n in names if n], "total": total}
+                # For Instamart, preserve spinId+quantity for cart merge
+                im_raw = []
+                if service == "instamart":
+                    for i in raw_items:
+                        if isinstance(i, dict) and i.get("spinId"):
+                            im_raw.append({
+                                "spinId": i["spinId"],
+                                "quantity": i.get("quantity", 1),
+                            })
+                return {"items": [n for n in names if n], "total": total, "raw_items": im_raw}
         _LOGGER.debug("get_cart(%s) plain-text: %r", service, text[:500])
-        return _parse_cart_text(text)
+        result = _parse_cart_text(text)
+        result["raw_items"] = []
+        return result
 
     async def add_to_food_cart_by_name(
         self, item_name: str, quantity: int, address_id: str
@@ -499,23 +516,33 @@ class SwiggyApiClient:
                 "check the product name and try again"
             )
 
-        # Step 2: get current cart to merge (update_cart REPLACES entire cart)
+        # Step 2: fetch current cart and merge (update_cart REPLACES entire cart)
+        existing_items: list[dict] = []
         try:
             current = await self.get_cart("instamart", address_id)
-            existing_items = []
-            # We don't have spinIds for existing items from the text response,
-            # so start fresh with just the new item (limitation of plain-text cart)
-        except Exception:
-            existing_items = []
+            existing_items = current.get("raw_items") or []
+            if not existing_items and current.get("items"):
+                # raw_items empty means plain-text response — can't merge; warn
+                _LOGGER.warning(
+                    "Instamart cart has items but spinIds could not be parsed "
+                    "(plain-text response) — existing cart items will be replaced"
+                )
+        except Exception as err:
+            _LOGGER.debug("Could not fetch current Instamart cart for merge: %s", err)
 
-        new_items = [{"spinId": spin_id, "quantity": quantity}]
+        # Merge: increment quantity if spinId already in cart, else append
+        merged: dict[str, dict] = {i["spinId"]: dict(i) for i in existing_items}
+        if spin_id in merged:
+            merged[spin_id]["quantity"] = merged[spin_id].get("quantity", 0) + quantity
+        else:
+            merged[spin_id] = {"spinId": spin_id, "quantity": quantity}
 
         # Step 3: update cart
         raw = await self._post(
             "instamart",
             _mcp_payload("update_cart", {
                 "selectedAddressId": address_id,
-                "items": new_items,
+                "items": list(merged.values()),
             }),
         )
         text = _extract_content_text(raw)
@@ -528,9 +555,8 @@ class SwiggyApiClient:
         return {"success": True, "message": text}
 
     async def flush_cart(self, service: str, address_id: str) -> dict:
-        """Clear cart. Food: flush_food_cart (needs addressId) / Instamart: clear_cart (no params)."""
+        """Clear cart. Both flush_food_cart and clear_cart take NO parameters per Swiggy docs."""
         if service == "instamart":
-            # clear_cart takes no parameters
             raw = await self._post(
                 "instamart",
                 _mcp_payload("clear_cart", {}),
@@ -538,7 +564,7 @@ class SwiggyApiClient:
         else:
             raw = await self._post(
                 "food",
-                _mcp_payload("flush_food_cart", {"addressId": address_id}),
+                _mcp_payload("flush_food_cart", {}),
             )
         text = _extract_content_text(raw)
         if text is None:

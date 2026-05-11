@@ -77,15 +77,34 @@ SENSORS: tuple[SwiggyMcpSensorDescription, ...] = (
     SwiggyMcpSensorDescription(
         key="cart_items",
         coordinator_key="cart_items",
-        name="Swiggy Cart Items",
+        name="Swiggy Food Cart Items",
         icon="mdi:cart-outline",
     ),
     SwiggyMcpSensorDescription(
         key="cart_total",
         coordinator_key="cart_total",
-        name="Swiggy Cart Total",
+        name="Swiggy Food Cart Total",
         icon="mdi:currency-inr",
         native_unit_of_measurement="₹",
+    ),
+    SwiggyMcpSensorDescription(
+        key="instamart_cart_items",
+        coordinator_key="instamart_cart_items",
+        name="Swiggy Instamart Cart Items",
+        icon="mdi:basket-outline",
+    ),
+    SwiggyMcpSensorDescription(
+        key="instamart_cart_total",
+        coordinator_key="instamart_cart_total",
+        name="Swiggy Instamart Cart Total",
+        icon="mdi:currency-inr",
+        native_unit_of_measurement="₹",
+    ),
+    SwiggyMcpSensorDescription(
+        key="address",
+        coordinator_key="address",
+        name="Swiggy Delivery Address",
+        icon="mdi:map-marker",
     ),
 )
 

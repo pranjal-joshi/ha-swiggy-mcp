@@ -40,6 +40,7 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
     ) -> None:
         self.client = client  # exposed so services.py can call cart methods
         self._address_id: str = entry.data.get(CONF_ADDRESS_ID, "")
+        self._address_text: str | None = None  # full address string for sensor
         self._prev_status: str | None = None
 
         interval = timedelta(
@@ -67,24 +68,42 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
             "billed_amount": None,
             "eta": None,
             "items": None,
+            # Food cart
             "cart_items": None,
             "cart_total": None,
+            # Instamart cart
+            "instamart_cart_items": None,
+            "instamart_cart_total": None,
+            # Delivery address
+            "address": None,
         }
 
         try:
-            # In add-on mode address_id may be empty — fetch it lazily
-            if not self._address_id:
+            # In add-on mode address_id may be empty — fetch it lazily.
+            # Also fetch addresses if we have an ID but no text yet (e.g. direct mode
+            # where address_id came from config but label was never resolved).
+            if not self._address_id or self._address_text is None:
                 try:
                     addresses = await self.client.get_addresses()
                     if addresses:
-                        self._address_id = addresses[0].get("id", "")
-                        _LOGGER.debug("Resolved address_id from Swiggy: %s", self._address_id)
+                        first = addresses[0]
+                        if not self._address_id:
+                            self._address_id = first.get("id", "")
+                            _LOGGER.debug("Resolved address_id from Swiggy: %s", self._address_id)
+                        # Find the address entry matching our configured id
+                        matched = next(
+                            (a for a in addresses if a.get("id") == self._address_id),
+                            first,
+                        )
+                        self._address_text = matched.get("address") or matched.get("name")
                     else:
                         _LOGGER.warning("Swiggy returned no addresses; will retry next poll")
-                        return empty
+                        if not self._address_id:
+                            return empty
                 except UpdateFailed as err:
                     _LOGGER.warning("Could not fetch addresses: %s; will retry next poll", err)
-                    return empty
+                    if not self._address_id:
+                        return empty
 
             orders_data = await self.client.get_food_orders(self._address_id, count=1)
 
@@ -130,14 +149,27 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
                     )
                 self._prev_status = status
 
-        # Fetch cart contents (non-fatal — empty on any failure)
+        # Populate delivery address sensor
+        result["address"] = self._address_text
+
+        # Fetch food cart (non-fatal)
         try:
             cart = await self.client.get_cart("food", self._address_id)
             result["cart_items"] = ", ".join(cart.get("items") or []) or None
             result["cart_total"] = cart.get("total")
         except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("Cart fetch failed (non-fatal): %s", err)
+            _LOGGER.debug("Food cart fetch failed (non-fatal): %s", err)
             result["cart_items"] = None
             result["cart_total"] = None
+
+        # Fetch Instamart cart (non-fatal)
+        try:
+            im_cart = await self.client.get_cart("instamart", self._address_id)
+            result["instamart_cart_items"] = ", ".join(im_cart.get("items") or []) or None
+            result["instamart_cart_total"] = im_cart.get("total")
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Instamart cart fetch failed (non-fatal): %s", err)
+            result["instamart_cart_items"] = None
+            result["instamart_cart_total"] = None
 
         return result
