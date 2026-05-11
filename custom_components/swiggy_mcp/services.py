@@ -85,7 +85,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         if not order_id:
             # Live fallback: try Instamart orders
             try:
-                im_data = await coordinator.client.get_instamart_orders(address_id, count=5)
+                im_data = await coordinator.client.get_instamart_orders(active_only=False, count=5)
                 orders = im_data.get("orders") or []
                 if orders:
                     order_id = orders[0].get("orderId") or orders[0].get("id")

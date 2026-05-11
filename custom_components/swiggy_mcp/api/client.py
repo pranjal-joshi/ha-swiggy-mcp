@@ -105,7 +105,77 @@ def _parse_addresses_text(text: str) -> list[dict]:
     return addresses
 
 
-def _parse_orders_text(text: str) -> dict:
+def _parse_search_menu_text(text: str) -> tuple[str | None, str | None]:
+    """Extract restaurantId and itemId from a plain-text search_menu response.
+
+    Swiggy's MCP server renders search_menu results as human-readable text.
+    We have observed (and defensively handle) several formats:
+
+    Format A — numbered list with parenthetical IDs:
+        1. Vada Pav (₹49) - Veg
+           Restaurant: Mumbai Express (ID: 12345)
+           Item ID: 67890
+
+    Format B — inline key-value:
+        restaurantId: 12345  itemId: 67890
+
+    Format C — JSON-like fragments embedded in text:
+        "restaurantId": "12345"  ...  "id": "67890"
+
+    Format D — dash-separated on one line:
+        Vada Pav | Restaurant ID: 12345 | Item ID: 67890
+
+    Returns (restaurant_id, item_id) — both None if not found.
+    """
+    restaurant_id: str | None = None
+    item_id: str | None = None
+
+    # ── Restaurant ID patterns (tried in order) ────────────────────────────
+    rid_patterns = [
+        # JSON-style key: "restaurantId": "abc"  or  restaurantId: abc
+        re.compile(r'"?restaurantId"?\s*[=:]\s*"?([A-Za-z0-9_@.-]+)"?'),
+        # Human label: Restaurant: Name (ID: abc)  or  Restaurant ID: abc
+        re.compile(r'[Rr]estaurant\s+(?:ID|Id|id)\s*[=:]\s*"?([A-Za-z0-9_@.-]+)"?'),
+        re.compile(r'[Rr]estaurant\b[^(]*\(ID:\s*([A-Za-z0-9_@.-]+)\)'),
+        # restId / rest_id
+        re.compile(r'"?rest(?:Id|_id)"?\s*[=:]\s*"?([A-Za-z0-9_@.-]+)"?'),
+    ]
+    for pat in rid_patterns:
+        m = pat.search(text)
+        if m:
+            restaurant_id = m.group(1).strip().strip('"')
+            break
+
+    # ── Item ID patterns ───────────────────────────────────────────────────
+    iid_patterns = [
+        # JSON-style "itemId": "abc"
+        re.compile(r'"itemId"\s*[=:]\s*"?([A-Za-z0-9_@.-]+)"?'),
+        # Human label: Item ID: abc
+        re.compile(r'[Ii]tem\s+(?:ID|Id|id)\s*[=:]\s*"?([A-Za-z0-9_@.-]+)"?'),
+        # "id": "abc" — only as a last resort (broad, may match wrong things)
+        re.compile(r'"id"\s*[=:]\s*"([A-Za-z0-9_@.-]+)"'),
+        # dishId / menuItemId
+        re.compile(r'"?(?:dishId|menuItemId)"?\s*[=:]\s*"?([A-Za-z0-9_@.-]+)"?'),
+    ]
+    for pat in iid_patterns:
+        m = pat.search(text)
+        if m:
+            item_id = m.group(1).strip().strip('"')
+            break
+
+    if restaurant_id or item_id:
+        _LOGGER.debug(
+            "_parse_search_menu_text: found restaurant=%r item=%r",
+            restaurant_id, item_id,
+        )
+    else:
+        _LOGGER.warning(
+            "_parse_search_menu_text: could not extract IDs from text (first 600 chars): %r",
+            text[:600],
+        )
+    return restaurant_id, item_id
+
+
     """Best-effort parse of Swiggy's plain-text order response."""
     _LOGGER.debug("Plain-text order response: %r", text[:500])
     lower = text.lower()
@@ -410,12 +480,18 @@ class SwiggyApiClient:
         _LOGGER.debug("search_menu raw response for '%s': %r", item_name, (search_text or "")[:1200])
 
         def _build_cart_item(iid: str, item: dict) -> dict:
-            """Build a cartItems entry, respecting variants vs variantsV2 format."""
+            """Build a cartItems entry for update_food_cart.
+
+            For a headless HA service the user hasn't chosen a variant, so we
+            pass empty arrays. Swiggy will apply defaults for items that don't
+            require a mandatory variant selection. We deliberately do NOT copy
+            the full variants/variantsV2 array from search results — that list
+            contains ALL possible options and sending it wholesale causes API
+            errors.
+            """
             entry: dict = {"itemId": iid, "quantity": quantity}
             if "variantsV2" in item:
-                entry["variantsV2"] = item.get("variantsV2") or []
-            elif "variants" in item:
-                entry["variants"] = item.get("variants") or []
+                entry["variantsV2"] = []
             else:
                 entry["variants"] = []
             return entry
@@ -495,22 +571,17 @@ class SwiggyApiClient:
                                 break
 
             else:
-                # JSON parse failed — plain text response
-                # Attempt to extract IDs with regex: look for restaurant/item ID patterns
+                # JSON parse failed — content[0].text is plain human-readable text.
+                # Use the dedicated plain-text parser which handles multiple known formats.
                 _LOGGER.warning(
-                    "search_menu returned non-JSON for '%s'; raw text: %r",
+                    "search_menu returned non-JSON for '%s'; attempting plain-text parse. "
+                    "Raw (first 800 chars): %r",
                     item_name, search_text[:800],
                 )
-                # Pattern: "restaurantId": "abc123" or restaurant_id: abc123
-                rid_m = re.search(r'"?restaurantId"?\s*[=:]\s*"?([A-Za-z0-9_-]+)"?', search_text)
-                iid_m = re.search(r'"?(?:itemId|id|dishId)"?\s*[=:]\s*"?([A-Za-z0-9_-]+)"?', search_text)
-                if rid_m and iid_m:
-                    restaurant_id = rid_m.group(1)
-                    cart_items = [{"itemId": iid_m.group(1), "quantity": quantity, "variants": []}]
-                    _LOGGER.debug(
-                        "search_menu plain-text regex match: restaurant=%s item=%s",
-                        restaurant_id, iid_m.group(1),
-                    )
+                rid, iid = _parse_search_menu_text(search_text)
+                if rid and iid:
+                    restaurant_id = rid
+                    cart_items = [{"itemId": iid, "quantity": quantity, "variants": []}]
 
         if not restaurant_id or not cart_items:
             _LOGGER.warning(

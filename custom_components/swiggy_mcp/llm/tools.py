@@ -111,7 +111,9 @@ class SwiggyGetRestaurantMenuTool(llm.Tool):
         self, hass: HomeAssistant, tool_input: ToolInput, llm_context: llm.LLMContext
     ) -> dict:
         args = dict(tool_input.tool_args)
-        return await _call_mcp(hass, SWIGGY_FOOD_URL, "get_restaurant_menu", args)
+        # Remap snake_case schema key → camelCase MCP param
+        payload = {"restaurantId": args.pop("restaurant_id"), **args}
+        return await _call_mcp(hass, SWIGGY_FOOD_URL, "get_restaurant_menu", payload)
 
 
 class SwiggyGetFoodCartTool(llm.Tool):
@@ -188,7 +190,9 @@ class SwiggyApplyCouponTool(llm.Tool):
         self, hass: HomeAssistant, tool_input: ToolInput, llm_context: llm.LLMContext
     ) -> dict:
         args = dict(tool_input.tool_args)
-        return await _call_mcp(hass, SWIGGY_FOOD_URL, "apply_food_coupon", args)
+        # Remap snake_case schema key → camelCase MCP param
+        payload = {"couponCode": args.pop("coupon_code"), **args}
+        return await _call_mcp(hass, SWIGGY_FOOD_URL, "apply_food_coupon", payload)
 
 
 class SwiggyPlaceFoodOrderTool(llm.Tool):
@@ -243,7 +247,9 @@ class SwiggyGetFoodOrderDetailsTool(llm.Tool):
         self, hass: HomeAssistant, tool_input: ToolInput, llm_context: llm.LLMContext
     ) -> dict:
         args = dict(tool_input.tool_args)
-        return await _call_mcp(hass, SWIGGY_FOOD_URL, "get_food_order_details", args)
+        # Remap snake_case schema key → camelCase MCP param
+        payload = {"orderId": args.pop("order_id"), **args}
+        return await _call_mcp(hass, SWIGGY_FOOD_URL, "get_food_order_details", payload)
 
 
 # ---------------------------------------------------------------------------
