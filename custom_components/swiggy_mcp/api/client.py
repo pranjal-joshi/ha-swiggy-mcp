@@ -468,8 +468,9 @@ class SwiggyApiClient:
                         products = data
 
                     for p in products[:1]:
-                        # Per docs: each product has variants[], each variant has spinId
-                        variants = p.get("variants") or []
+                        # Per docs: each product has variations[] or variants[],
+                        # each entry has spinId. Swiggy returns "variations" in practice.
+                        variants = p.get("variations") or p.get("variants") or []
                         if variants:
                             spin_id = variants[0].get("spinId")
                         # Fallback: spinId directly on the product

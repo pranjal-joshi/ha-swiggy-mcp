@@ -50,7 +50,12 @@ def _mcp_call(name: str, arguments: dict, req_id: int = 1) -> dict:
 async def _call_mcp(hass: HomeAssistant, url: str, tool_name: str, args: dict) -> dict:
     """Call a Swiggy MCP tool and return a JSON-serialisable dict."""
     client, addr_id = _get_client(hass)
-    args_with_addr = {**args, "addressId": addr_id}
+    # Only inject addressId if the caller hasn't already provided it or
+    # an equivalent key (selectedAddressId used by Instamart tools).
+    if "addressId" not in args and "selectedAddressId" not in args:
+        args_with_addr = {**args, "addressId": addr_id}
+    else:
+        args_with_addr = args
     # Resolve service name ("food"/"instamart") from the endpoint URL so
     # client._resolve_url() works correctly in both direct and add-on mode.
     service = _URL_TO_SERVICE.get(url, "food")
@@ -58,7 +63,10 @@ async def _call_mcp(hass: HomeAssistant, url: str, tool_name: str, args: dict) -
     content = raw.get("result", {}).get("content", [])
     if content:
         text = content[0].get("text", "{}")
-        return json.loads(text) if isinstance(text, str) else text
+        try:
+            return json.loads(text) if isinstance(text, str) else text
+        except (json.JSONDecodeError, ValueError):
+            return {"success": True, "message": text}
     return {"success": False, "error": "No response from Swiggy"}
 
 
@@ -121,7 +129,7 @@ class SwiggyAddToFoodCartTool(llm.Tool):
     name = "swiggy_add_to_food_cart"
     description = (
         "Add an item to the Swiggy food delivery cart. "
-        "Requires item_id from the restaurant menu."
+        "Requires item_id and restaurant_id from search_menu or get_restaurant_menu results."
     )
     parameters = vol.Schema(
         {
@@ -135,7 +143,14 @@ class SwiggyAddToFoodCartTool(llm.Tool):
         self, hass: HomeAssistant, tool_input: ToolInput, llm_context: llm.LLMContext
     ) -> dict:
         args = dict(tool_input.tool_args)
-        return await _call_mcp(hass, SWIGGY_FOOD_URL, "add_to_food_cart", args)
+        # update_food_cart expects: restaurantId, cartItems[{itemId, quantity}], addressId
+        _, addr_id = _get_client(hass)
+        payload = {
+            "restaurantId": args["restaurant_id"],
+            "cartItems": [{"itemId": args["item_id"], "quantity": args.get("quantity", 1)}],
+            "addressId": addr_id,
+        }
+        return await _call_mcp(hass, SWIGGY_FOOD_URL, "update_food_cart", payload)
 
 
 class SwiggyFlushFoodCartTool(llm.Tool):
@@ -238,7 +253,8 @@ class SwiggyGetFoodOrderDetailsTool(llm.Tool):
 class SwiggySearchInstamartTool(llm.Tool):
     name = "swiggy_search_instamart"
     description = (
-        "Search Swiggy Instamart for grocery products by name, brand or category."
+        "Search Swiggy Instamart for grocery products by name, brand or category. "
+        "Returns products with their variations; each variation has a spinId needed for add-to-cart."
     )
     parameters = vol.Schema(
         {
@@ -251,7 +267,7 @@ class SwiggySearchInstamartTool(llm.Tool):
         self, hass: HomeAssistant, tool_input: ToolInput, llm_context: llm.LLMContext
     ) -> dict:
         args = dict(tool_input.tool_args)
-        return await _call_mcp(hass, SWIGGY_INSTAMART_URL, "search_instamart_products", args)
+        return await _call_mcp(hass, SWIGGY_INSTAMART_URL, "search_products", args)
 
 
 class SwiggyGetInstamartCartTool(llm.Tool):
@@ -262,17 +278,18 @@ class SwiggyGetInstamartCartTool(llm.Tool):
     async def async_call(
         self, hass: HomeAssistant, tool_input: ToolInput, llm_context: llm.LLMContext
     ) -> dict:
-        return await _call_mcp(hass, SWIGGY_INSTAMART_URL, "get_instamart_cart", {})
+        return await _call_mcp(hass, SWIGGY_INSTAMART_URL, "get_cart", {})
 
 
 class SwiggyAddToInstamartCartTool(llm.Tool):
     name = "swiggy_add_to_instamart_cart"
     description = (
-        "Add a grocery item to the Instamart cart. Use item_id from search results."
+        "Add a grocery item to the Instamart cart. "
+        "Use spin_id from swiggy_search_instamart results (variations[i].spinId)."
     )
     parameters = vol.Schema(
         {
-            vol.Required("item_id"): str,
+            vol.Required("spin_id"): str,
             vol.Optional("quantity", default=1): int,
         }
     )
@@ -281,7 +298,13 @@ class SwiggyAddToInstamartCartTool(llm.Tool):
         self, hass: HomeAssistant, tool_input: ToolInput, llm_context: llm.LLMContext
     ) -> dict:
         args = dict(tool_input.tool_args)
-        return await _call_mcp(hass, SWIGGY_INSTAMART_URL, "add_to_instamart_cart", args)
+        # update_cart expects: selectedAddressId, items[{spinId, quantity}]
+        _, addr_id = _get_client(hass)
+        payload = {
+            "selectedAddressId": addr_id,
+            "items": [{"spinId": args["spin_id"], "quantity": args.get("quantity", 1)}],
+        }
+        return await _call_mcp(hass, SWIGGY_INSTAMART_URL, "update_cart", payload)
 
 
 # ---------------------------------------------------------------------------
