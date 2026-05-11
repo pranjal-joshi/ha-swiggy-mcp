@@ -227,6 +227,40 @@ def _parse_search_menu_items(text: str) -> list[dict]:
         _LOGGER.debug("_parse_search_menu_items (Format D): found %d items", len(items))
         return items
 
+    # ── Format E: get_restaurant_menu output ──────────────────────────────────
+    # Header: "Menu for Bikkgane Biryani (ID: 1230155)"
+    # Items:  "  - Chicken Dum Biryani Bowl - 500ml — ₹339 | Non-veg (ID: 184897574)"
+    #
+    # Also handles search_restaurants output:
+    # "1. Bikkgane Biryani (Ad) — ... (ID: 1230155)"
+    # followed by search_menu output that contains same (ID: ...) inline.
+    menu_rid: str | None = None
+    # Try to find restaurant ID from a header line (first ~5 lines)
+    for line in lines[:5]:
+        hm = re.search(r"\(ID:\s*([A-Za-z0-9_@.-]+)\)", line)
+        if hm:
+            menu_rid = hm.group(1).strip()
+            break
+
+    if menu_rid:
+        for line in lines:
+            stripped = line.strip()
+            # "  - Item Name — ₹Price | Tags, has addons (ID: 184897574)"
+            im = re.match(
+                r"^[-*]\s+(.+?)\s+[—–-]+\s*[₹Rs.\d,]+.*\(ID:\s*([A-Za-z0-9_@.-]+)\)",
+                stripped,
+            )
+            if im:
+                items.append({
+                    "name": im.group(1).strip(),
+                    "restaurant_id": menu_rid,
+                    "item_id": im.group(2).strip(),
+                })
+
+    if items:
+        _LOGGER.debug("_parse_search_menu_items (Format E): found %d items from restaurant %s", len(items), menu_rid)
+        return items
+
     _LOGGER.warning(
         "_parse_search_menu_items: could not extract any items from text "
         "(first 600 chars): %r", text[:600]
@@ -566,39 +600,87 @@ class SwiggyApiClient:
                 ]
 
                 # ── Total resolution — many possible field names / nesting ──
-                # Priority: explicit total fields → billBreakup sub-object →
-                # charges sub-object → stores[i].billBreakup → any numeric "total" key
+                # Swiggy uses inconsistent keys AND mixes numeric/string values
+                # e.g. cartTotalAmount="₹195", toPay={"value":"₹195"}, grandTotal=195.0
+
+                def _strip_currency(val: Any) -> float | None:
+                    """Parse numeric or currency-string value to float.
+                    Handles: 195, 195.0, "195", "₹195", "Rs. 1,200.50"
+                    """
+                    if isinstance(val, (int, float)):
+                        return float(val)
+                    if isinstance(val, str):
+                        cleaned = re.sub(r"[₹RsA-Za-z\s,]", "", val).strip(".")
+                        try:
+                            return float(cleaned) if cleaned else None
+                        except ValueError:
+                            return None
+                    return None
+
                 def _find_total(d: dict) -> float | None:
+                    # Direct keys — includes cartTotalAmount (Instamart uses this)
                     for key in (
                         "totalToPay", "grandTotal", "total", "billTotal",
                         "totalAmount", "itemTotal", "cartTotal", "orderTotal",
+                        "cartTotalAmount",
                     ):
-                        v = d.get(key)
-                        if v is not None:
-                            try:
-                                return float(v)
-                            except (TypeError, ValueError):
-                                pass
+                        result = _strip_currency(d.get(key))
+                        if result is not None:
+                            return result
+                    # Nested {value: "₹195"} / {amount: 195} shape
+                    # e.g. toPay: {label: "To Pay", value: "₹195"}
+                    for key in ("toPay", "totalToPay", "grandTotal", "total"):
+                        nested = d.get(key)
+                        if isinstance(nested, dict):
+                            result = _strip_currency(
+                                nested.get("value") or nested.get("amount")
+                            )
+                            if result is not None:
+                                return result
                     return None
 
                 total: float | None = _find_total(data)
 
                 if total is None:
-                    # Check known sub-objects
-                    for sub_key in ("billBreakup", "charges", "bill", "pricing"):
+                    # Sub-objects: billBreakdown (Instamart) + billBreakup + others
+                    for sub_key in (
+                        "billBreakdown", "billBreakup", "charges", "bill", "pricing"
+                    ):
                         sub = data.get(sub_key)
                         if isinstance(sub, dict):
                             total = _find_total(sub)
                             if total is not None:
+                                _LOGGER.debug(
+                                    "get_cart(%s) total from sub-object %r = %s",
+                                    service, sub_key, total,
+                                )
+                                break
+                            # lineItems scan: look for "To Pay" / "Grand Total" label
+                            for li in (sub.get("lineItems") or []):
+                                if not isinstance(li, dict):
+                                    continue
+                                label = (li.get("label") or "").lower()
+                                if any(k in label for k in ("to pay", "grand total", "total")):
+                                    result = _strip_currency(li.get("value"))
+                                    if result is not None:
+                                        total = result
+                                        _LOGGER.debug(
+                                            "get_cart(%s) total from lineItems label=%r = %s",
+                                            service, li.get("label"), total,
+                                        )
+                                        break
+                            if total is not None:
                                 break
 
                 if total is None:
-                    # Multi-store: stores[0].billBreakup
+                    # Multi-store: stores[0].billBreakup / billBreakdown
                     for store in (data.get("stores") or []):
                         if isinstance(store, dict):
                             total = _find_total(store)
                             if total is None:
-                                for sub_key in ("billBreakup", "charges", "bill"):
+                                for sub_key in (
+                                    "billBreakdown", "billBreakup", "charges", "bill"
+                                ):
                                     sub = store.get(sub_key)
                                     if isinstance(sub, dict):
                                         total = _find_total(sub)
@@ -607,15 +689,17 @@ class SwiggyApiClient:
                                 break
 
                 if total is None:
-                    # Last resort: scan all top-level numeric keys containing "total"
+                    # Last resort: scan all top-level keys containing "total" or "pay"
                     for k, v in data.items():
-                        if "total" in k.lower() and v is not None:
-                            try:
-                                total = float(v)
-                                _LOGGER.debug("get_cart(%s) total from fallback key %r = %s", service, k, total)
+                        if any(kw in k.lower() for kw in ("total", "topay", "to_pay")):
+                            result = _strip_currency(v)
+                            if result is not None:
+                                total = result
+                                _LOGGER.debug(
+                                    "get_cart(%s) total from fallback key %r = %s",
+                                    service, k, total,
+                                )
                                 break
-                            except (TypeError, ValueError):
-                                pass
 
                 # For Instamart, preserve spinId+quantity for cart merge
                 im_raw = []
