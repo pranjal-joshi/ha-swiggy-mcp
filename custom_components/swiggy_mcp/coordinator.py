@@ -41,6 +41,7 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
         self.client = client  # exposed so services.py can call cart methods
         self._address_id: str = entry.data.get(CONF_ADDRESS_ID, "")
         self._address_text: str | None = None  # full address string for sensor
+        self._addresses: list[dict] = []  # full list for address select entity
         self._prev_status: str | None = None
 
         interval = timedelta(
@@ -52,6 +53,28 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
             name=DOMAIN,
             update_interval=interval,
         )
+
+    async def async_update_address(self, address_id: str) -> None:
+        """Switch active delivery address and persist to config entry.
+
+        Called by the address select entity when the user picks a new address.
+        Triggers an immediate data refresh so all sensors update instantly.
+        """
+        matched = next(
+            (a for a in self._addresses if a.get("id") == address_id), None
+        )
+        if matched is None:
+            _LOGGER.warning("async_update_address: id %r not in cached list", address_id)
+            return
+        self._address_id = address_id
+        self._address_text = matched.get("address") or matched.get("name") or matched.get("label")
+        _LOGGER.info("Delivery address changed to: %s (%s)", self._address_text, address_id)
+        # Persist to config entry so the choice survives a restart
+        self.hass.config_entries.async_update_entry(
+            self._entry,  # type: ignore[attr-defined]
+            data={**self._entry.data, CONF_ADDRESS_ID: address_id},  # type: ignore[attr-defined]
+        )
+        await self.async_request_refresh()
 
     async def _async_update_data(self) -> dict:
         """Fetch latest order from Swiggy; returns normalised state dict.
@@ -86,6 +109,7 @@ class SwiggyDataUpdateCoordinator(DataUpdateCoordinator):
                 try:
                     addresses = await self.client.get_addresses()
                     if addresses:
+                        self._addresses = addresses  # cache for select entity
                         first = addresses[0]
                         if not self._address_id:
                             self._address_id = first.get("id", "")

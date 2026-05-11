@@ -301,16 +301,29 @@ class SwiggyApiClient:
         if parsed is not None:
             data = _unwrap_data(parsed) if isinstance(parsed, dict) else parsed
             if isinstance(data, dict):
-                # Food cart: cartItems[]; Instamart cart: items[]
+                # Food cart: cartItems[]; Instamart cart: items[] or cartItems[]
                 raw_items = data.get("cartItems") or data.get("items") or []
                 names = [
                     i.get("name") or i.get("itemName") or i.get("productName", "")
                     for i in raw_items if isinstance(i, dict)
                 ]
-                total = (
-                    data.get("total") or data.get("grandTotal")
-                    or data.get("billTotal") or data.get("totalAmount")
-                )
+                # Total: try many field names. Instamart uses billBreakup.totalToPay
+                # or charges.total; Food uses grandTotal or totalAmount.
+                total = None
+                for key in ("totalToPay", "total", "grandTotal", "billTotal", "totalAmount", "itemTotal"):
+                    v = data.get(key)
+                    if v is not None:
+                        total = v
+                        break
+                # Instamart billBreakup sub-object
+                if total is None:
+                    bill = data.get("billBreakup") or data.get("charges") or {}
+                    if isinstance(bill, dict):
+                        for key in ("totalToPay", "total", "grandTotal", "totalAmount", "billTotal"):
+                            v = bill.get(key)
+                            if v is not None:
+                                total = v
+                                break
                 # For Instamart, preserve spinId+quantity for cart merge
                 im_raw = []
                 if service == "instamart":
@@ -320,6 +333,7 @@ class SwiggyApiClient:
                                 "spinId": i["spinId"],
                                 "quantity": i.get("quantity", 1),
                             })
+                _LOGGER.debug("get_cart(%s) parsed total=%s from keys=%s", service, total, list(data.keys()))
                 return {"items": [n for n in names if n], "total": total, "raw_items": im_raw}
         _LOGGER.debug("get_cart(%s) plain-text: %r", service, text[:500])
         result = _parse_cart_text(text)
@@ -332,9 +346,12 @@ class SwiggyApiClient:
         """Search for a dish by name, then add first result to food cart.
 
         Uses search_menu to resolve item + restaurant IDs, then update_food_cart.
-        Two response shapes are handled defensively:
-          - Flat:   data.items[i]  { id, restaurantId, ... }   ← current API
-          - Nested: data.restaurants[i].menuItems[j]           ← legacy fallback
+        Handles all known response shapes defensively:
+          - Shape A: data.items[i]               { id, restaurantId, name, variants/variantsV2, ... }
+          - Shape B: data.restaurants[i].menuItems[j]                        ← legacy
+          - Shape C: data is a list of items directly
+          - Shape D: top-level list of restaurant objects
+          - Plain-text fallback: parse IDs from text using regex
         """
         # Step 1: search for the item
         search_raw = await self._post(
@@ -345,71 +362,110 @@ class SwiggyApiClient:
         restaurant_id = None
         cart_items = []
 
-        _LOGGER.debug("search_menu raw response for '%s': %r", item_name, (search_text or "")[:800])
+        _LOGGER.debug("search_menu raw response for '%s': %r", item_name, (search_text or "")[:1200])
+
+        def _build_cart_item(iid: str, item: dict) -> dict:
+            """Build a cartItems entry, respecting variants vs variantsV2 format."""
+            entry: dict = {"itemId": iid, "quantity": quantity}
+            if "variantsV2" in item:
+                entry["variantsV2"] = item.get("variantsV2") or []
+            elif "variants" in item:
+                entry["variants"] = item.get("variants") or []
+            else:
+                entry["variants"] = []
+            return entry
+
+        def _try_extract_from_list(item_list: list) -> tuple[str | None, list]:
+            """Scan a flat list of menu item dicts and return (restaurantId, cartItems)."""
+            for item in item_list:
+                if not isinstance(item, dict):
+                    continue
+                rid = (
+                    item.get("restaurantId") or item.get("restaurant_id")
+                    or item.get("restId")
+                )
+                iid = (
+                    item.get("id") or item.get("itemId") or item.get("dishId")
+                    or item.get("menuItemId")
+                )
+                if rid and iid:
+                    _LOGGER.debug("search_menu flat-item match: restaurant=%s item=%s", rid, iid)
+                    return rid, [_build_cart_item(str(iid), item)]
+            return None, []
 
         if search_text:
             parsed = _try_parse_json(search_text)
             if parsed is not None:
                 data = _unwrap_data(parsed) if isinstance(parsed, dict) else parsed
 
-                # Guard: _unwrap_data may return None when data key is null
                 if not data:
                     _LOGGER.warning(
                         "search_menu returned success but empty data for '%s'", item_name
                     )
                 else:
-                    # ── Shape A: flat items list (current API per docs) ──────────
-                    # data = { items: [ { id, restaurantId, name, variants, ... } ] }
-                    flat_items = []
+                    # ── Shape A: data = { items: [...] } or { menuItems: [...] } ──
+                    flat_items: list = []
                     if isinstance(data, dict):
-                        flat_items = data.get("items") or data.get("menuItems") or []
+                        flat_items = (
+                            data.get("items") or data.get("menuItems")
+                            or data.get("dishes") or data.get("results") or []
+                        )
                     elif isinstance(data, list):
-                        flat_items = data
-
-                    for item in flat_items[:1]:
-                        rid = item.get("restaurantId") or item.get("restaurant_id")
-                        iid = item.get("id") or item.get("itemId")
-                        if rid and iid:
-                            restaurant_id = rid
-                            cart_items = [{
-                                "itemId": iid,
-                                "quantity": quantity,
-                                "variants": item.get("variants", []),
-                            }]
-                            _LOGGER.debug(
-                                "search_menu shape-A match: restaurant=%s item=%s", rid, iid
-                            )
-                            break
-
-                    # ── Shape B: nested restaurants[].menuItems[] (legacy fallback) ─
-                    if not restaurant_id or not cart_items:
-                        nested = []
-                        if isinstance(data, dict):
-                            nested = data.get("restaurants") or []
-                        for r in nested[:1]:
-                            rid = r.get("restaurantId") or r.get("id")
-                            menu_items = r.get("menuItems") or r.get("items") or []
-                            for mi in menu_items[:1]:
-                                iid = mi.get("itemId") or mi.get("id")
-                                if rid and iid:
-                                    restaurant_id = rid
-                                    cart_items = [{
-                                        "itemId": iid,
-                                        "quantity": quantity,
-                                        "variants": mi.get("variants", []),
-                                    }]
-                                    _LOGGER.debug(
-                                        "search_menu shape-B match: restaurant=%s item=%s", rid, iid
-                                    )
+                        # Shape C: bare list — could be items OR restaurants
+                        first = data[0] if data else {}
+                        if isinstance(first, dict) and (
+                            first.get("items") or first.get("menuItems")
+                        ):
+                            # Shape D: list of restaurant objects
+                            for r in data[:3]:
+                                rid = r.get("restaurantId") or r.get("id")
+                                mi_list = r.get("menuItems") or r.get("items") or []
+                                rid2, ci = _try_extract_from_list(mi_list)
+                                if rid2 and ci:
+                                    restaurant_id, cart_items = rid2, ci
                                     break
-                            if restaurant_id and cart_items:
+                                elif rid:
+                                    rid2, ci = _try_extract_from_list(mi_list)
+                                    if ci:
+                                        restaurant_id, cart_items = rid, ci
+                                        break
+                        else:
+                            flat_items = data
+
+                    if not restaurant_id:
+                        restaurant_id, cart_items = _try_extract_from_list(flat_items)
+
+                    # ── Shape B: data.restaurants[].menuItems[] ─────────────────
+                    if not restaurant_id and isinstance(data, dict):
+                        nested = data.get("restaurants") or data.get("restaurantList") or []
+                        for r in nested[:3]:
+                            rid = r.get("restaurantId") or r.get("id")
+                            mi_list = r.get("menuItems") or r.get("items") or r.get("dishes") or []
+                            rid2, ci = _try_extract_from_list(mi_list)
+                            if rid2 and ci:
+                                restaurant_id, cart_items = rid2, ci
                                 break
+                            elif rid and ci:
+                                restaurant_id, cart_items = rid, ci
+                                break
+
             else:
-                # JSON parse failed — Swiggy returned plain text
+                # JSON parse failed — plain text response
+                # Attempt to extract IDs with regex: look for restaurant/item ID patterns
                 _LOGGER.warning(
                     "search_menu returned non-JSON for '%s'; raw text: %r",
-                    item_name, search_text[:500],
+                    item_name, search_text[:800],
                 )
+                # Pattern: "restaurantId": "abc123" or restaurant_id: abc123
+                rid_m = re.search(r'"?restaurantId"?\s*[=:]\s*"?([A-Za-z0-9_-]+)"?', search_text)
+                iid_m = re.search(r'"?(?:itemId|id|dishId)"?\s*[=:]\s*"?([A-Za-z0-9_-]+)"?', search_text)
+                if rid_m and iid_m:
+                    restaurant_id = rid_m.group(1)
+                    cart_items = [{"itemId": iid_m.group(1), "quantity": quantity, "variants": []}]
+                    _LOGGER.debug(
+                        "search_menu plain-text regex match: restaurant=%s item=%s",
+                        restaurant_id, iid_m.group(1),
+                    )
 
         if not restaurant_id or not cart_items:
             _LOGGER.warning(
@@ -566,13 +622,23 @@ class SwiggyApiClient:
                 "food",
                 _mcp_payload("flush_food_cart", {}),
             )
+        _LOGGER.debug("flush_cart(%s) raw envelope: %r", service, str(raw)[:500])
         text = _extract_content_text(raw)
+        _LOGGER.debug("flush_cart(%s) content text: %r", service, (text or "")[:300])
         if text is None:
+            _LOGGER.info("flush_cart(%s): empty content — assuming success", service)
             return {"success": True}
         parsed = _try_parse_json(text)
         if parsed is not None:
-            return _unwrap_data(parsed) if isinstance(parsed, dict) else {"success": True}
-        _LOGGER.info("flush_cart(%s) response: %s", service, text[:200])
+            result = _unwrap_data(parsed) if isinstance(parsed, dict) else {"success": True}
+            _LOGGER.info("flush_cart(%s) success: %r", service, result)
+            return result
+        # Plain-text response — check for error keywords
+        lower = text.lower()
+        if any(kw in lower for kw in ("error", "failed", "invalid", "unauthorized")):
+            _LOGGER.error("flush_cart(%s) returned error text: %r", service, text[:300])
+            raise UpdateFailed(f"Clear cart failed: {text[:200]}")
+        _LOGGER.info("flush_cart(%s) plain-text response: %s", service, text[:200])
         return {"success": True, "message": text}
 
     async def get_instamart_orders(self, address_id: str, count: int = 1) -> dict:
@@ -611,4 +677,19 @@ class SwiggyApiClient:
         if parsed is not None:
             return _unwrap_data(parsed) if isinstance(parsed, dict) else {"success": True}
         _LOGGER.info("place_food_order response: %s", text[:300])
+        return {"success": True, "message": text}
+
+    async def place_instamart_order(self, address_id: str) -> dict:
+        """Place Instamart grocery order via checkout tool. Cart value must be < ₹1000."""
+        raw = await self._post(
+            "instamart",
+            _mcp_payload("checkout", {"addressId": address_id}),
+        )
+        text = _extract_content_text(raw)
+        if text is None:
+            return {"success": True}
+        parsed = _try_parse_json(text)
+        if parsed is not None:
+            return _unwrap_data(parsed) if isinstance(parsed, dict) else {"success": True}
+        _LOGGER.info("place_instamart_order response: %s", text[:300])
         return {"success": True, "message": text}
