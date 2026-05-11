@@ -5,8 +5,8 @@ add_to_cart:
     For Food: searches menus and adds the first matching dish.
     For Instamart: searches products and adds by spinId.
   fields:
-    item:
-      name: Item
+    query:
+      name: Query
       description: Name of the item to search for and add (e.g. "Maggi Noodles 70g", "Chicken Biryani")
       required: true
       example: "Maggi Noodles 70g"

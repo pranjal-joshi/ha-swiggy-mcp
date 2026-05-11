@@ -26,7 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 
 SERVICE_ADD_TO_CART_SCHEMA = vol.Schema(
     {
-        vol.Required("item"): str,
+        vol.Required("query"): str,
         vol.Optional("quantity", default=1): vol.All(int, vol.Range(min=1)),
         vol.Optional("service", default="instamart"): vol.In(["food", "instamart"]),
     }
@@ -65,14 +65,45 @@ def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_reorder_last(call: ServiceCall) -> None:
         coordinator = _get_coordinator(hass)
+        address_id = _get_address_id(coordinator)
+
+        # Try cached order_id from coordinator first
         order_id = (coordinator.data or {}).get("order_id")
+        order_source = "food"
+
+        if not order_id:
+            # Live fallback: try food orders
+            try:
+                food_data = await coordinator.client.get_food_orders(address_id, count=5)
+                orders = food_data.get("orders") or []
+                if orders:
+                    order_id = orders[0].get("orderId") or orders[0].get("id")
+                    order_source = "food"
+            except Exception as err:
+                _LOGGER.debug("Live food order fallback failed: %s", err)
+
+        if not order_id:
+            # Live fallback: try Instamart orders
+            try:
+                im_data = await coordinator.client.get_instamart_orders(address_id, count=5)
+                orders = im_data.get("orders") or []
+                if orders:
+                    order_id = orders[0].get("orderId") or orders[0].get("id")
+                    order_source = "instamart"
+            except Exception as err:
+                _LOGGER.debug("Live Instamart order fallback failed: %s", err)
+
         if not order_id:
             raise ServiceValidationError(
                 "No recent order found — make sure there is an active or recent order"
             )
+
         try:
             details = await coordinator.client.get_food_order_details(order_id)
-            _LOGGER.info("Reorder triggered for order %s: %s", order_id, details)
+            _LOGGER.info(
+                "Reorder triggered for %s order %s: %s",
+                order_source, order_id, details,
+            )
             # Note: Swiggy MCP has no native reorder tool. This fetches order
             # details for reference; full reorder requires manual cart rebuild.
             raise HomeAssistantError(
@@ -86,7 +117,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         coordinator = _get_coordinator(hass)
         address_id = _get_address_id(coordinator)
         service = call.data.get("service", "instamart")
-        item = call.data["item"]
+        item = call.data["query"]
         quantity = call.data.get("quantity", 1)
 
         try:

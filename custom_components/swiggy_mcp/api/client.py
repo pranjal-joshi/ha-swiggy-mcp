@@ -466,6 +466,29 @@ class SwiggyApiClient:
         _LOGGER.info("flush_cart(%s) response: %s", service, text[:200])
         return {"success": True, "message": text}
 
+    async def get_instamart_orders(self, address_id: str, count: int = 1) -> dict:
+        """Fetch recent Instamart orders."""
+        raw = await self._post(
+            "instamart",
+            _mcp_payload("get_orders", {"addressId": address_id, "orderCount": count}),
+        )
+        text = _extract_content_text(raw)
+        if text is None:
+            return {"orders": []}
+        parsed = _try_parse_json(text)
+        if parsed is not None:
+            data = _unwrap_data(parsed)
+            return data if isinstance(data, dict) else {"orders": []}
+        _LOGGER.debug("get_instamart_orders plain-text: %r", text[:300])
+        lower = text.lower()
+        if any(p in lower for p in ("no active", "no order", "no current")):
+            return {"orders": []}
+        _LOGGER.warning(
+            "get_instamart_orders returned plain text — cannot parse order state. "
+            "Raw (first 300 chars): %r", text[:300]
+        )
+        return {"orders": []}
+
     async def place_food_order(self, address_id: str) -> dict:
         """Place food delivery order. Cart value must be < ₹1000 (Swiggy beta limit)."""
         raw = await self._post(
